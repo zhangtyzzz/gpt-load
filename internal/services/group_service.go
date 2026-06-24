@@ -99,6 +99,7 @@ type GroupCreateParams struct {
 	ModelRedirectStrict bool
 	Config              map[string]any
 	HeaderRules         []models.HeaderRule
+	AffinityRules       []models.AffinityRule
 	ProxyKeys           string
 	SubGroups           []SubGroupInput
 }
@@ -121,6 +122,7 @@ type GroupUpdateParams struct {
 	ModelRedirectStrict *bool
 	Config              map[string]any
 	HeaderRules         *[]models.HeaderRule
+	AffinityRules       *[]models.AffinityRule
 	ProxyKeys           *string
 	SubGroups           *[]SubGroupInput
 }
@@ -221,6 +223,12 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		headerRulesJSON = datatypes.JSON("[]")
 	}
 
+	// Normalize affinity rules
+	affinityRulesJSON, err := normalizeAffinityRules(params.AffinityRules)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate model redirect rules for aggregate groups
 	if groupType == "aggregate" && len(params.ModelRedirectRules) > 0 {
 		return nil, NewI18nError(app_errors.ErrValidation, "validation.aggregate_no_model_redirect", nil)
@@ -246,6 +254,7 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		ModelRedirectStrict: params.ModelRedirectStrict,
 		Config:              cleanedConfig,
 		HeaderRules:         headerRulesJSON,
+		AffinityRules:       affinityRulesJSON,
 		ProxyKeys:           strings.TrimSpace(params.ProxyKeys),
 	}
 
@@ -482,6 +491,14 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 			headerRulesJSON = datatypes.JSON("[]")
 		}
 		group.HeaderRules = headerRulesJSON
+	}
+
+	if params.AffinityRules != nil {
+		affinityRulesJSON, err := normalizeAffinityRules(*params.AffinityRules)
+		if err != nil {
+			return nil, err
+		}
+		group.AffinityRules = affinityRulesJSON
 	}
 
 	if err := tx.Save(&group).Error; err != nil {
@@ -931,6 +948,33 @@ func (s *GroupService) normalizeHeaderRules(rules []models.HeaderRule) (datatype
 	}
 
 	return datatypes.JSON(headerRulesBytes), nil
+}
+
+// normalizeAffinityRules validates and serializes affinity rules to JSON.
+func normalizeAffinityRules(rules []models.AffinityRule) (datatypes.JSON, error) {
+	if len(rules) == 0 {
+		return datatypes.JSON("[]"), nil
+	}
+
+	// Filter out rules with empty names
+	normalized := make([]models.AffinityRule, 0, len(rules))
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Name) == "" {
+			continue
+		}
+		normalized = append(normalized, rule)
+	}
+
+	if len(normalized) == 0 {
+		return datatypes.JSON("[]"), nil
+	}
+
+	rulesBytes, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, NewI18nError(app_errors.ErrInternalServer, "error.process_affinity_rules", map[string]any{"error": err.Error()})
+	}
+
+	return datatypes.JSON(rulesBytes), nil
 }
 
 // validateAndCleanUpstreams validates upstream definitions.

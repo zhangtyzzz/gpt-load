@@ -34,6 +34,7 @@ type ProxyServer struct {
 	channelFactory    *channel.Factory
 	requestLogService *services.RequestLogService
 	encryptionSvc     encryption.Service
+	affinityManager   *keypool.AffinityManager
 }
 
 // NewProxyServer creates a new proxy server
@@ -45,6 +46,7 @@ func NewProxyServer(
 	channelFactory *channel.Factory,
 	requestLogService *services.RequestLogService,
 	encryptionSvc encryption.Service,
+	affinityManager *keypool.AffinityManager,
 ) (*ProxyServer, error) {
 	return &ProxyServer{
 		keyProvider:       keyProvider,
@@ -54,6 +56,7 @@ func NewProxyServer(
 		channelFactory:    channelFactory,
 		requestLogService: requestLogService,
 		encryptionSvc:     encryptionSvc,
+		affinityManager:   affinityManager,
 	}, nil
 }
 
@@ -126,7 +129,48 @@ func (ps *ProxyServer) executeRequestWithRetry(
 ) {
 	cfg := group.EffectiveConfig
 
-	apiKey, err := ps.keyProvider.SelectKey(group.ID)
+	// Extract affinity value on first attempt (retryCount == 0), then persist in context for retries
+	var affinityHash string
+	var affinityTTL time.Duration
+	if retryCount == 0 && ps.affinityManager != nil && len(group.AffinityRuleList) > 0 {
+		modelName := channelHandler.ExtractModel(c, bodyBytes)
+		affinityResult := ps.affinityManager.ExtractValue(c, bodyBytes, modelName, group.AffinityRuleList)
+		if affinityResult.Hash != "" {
+			affinityHash = affinityResult.Hash
+			affinityTTL = keypool.GetEffectiveTTL(affinityResult.MatchedRule, cfg.KeyAffinityDefaultTTL)
+			// Store in context for retry attempts
+			c.Set("affinity_hash", affinityHash)
+			c.Set("affinity_ttl", affinityTTL)
+		}
+	} else if retryCount > 0 {
+		// Retrieve affinity info from context for retries
+		if h, exists := c.Get("affinity_hash"); exists {
+			affinityHash = h.(string)
+		}
+		if t, exists := c.Get("affinity_ttl"); exists {
+			affinityTTL = t.(time.Duration)
+		}
+	}
+
+	// Select key with or without affinity (affinity only on first attempt to prefer the mapped key)
+	var apiKey *models.APIKey
+	var err error
+	if affinityHash != "" && retryCount == 0 {
+		apiKey, err = ps.keyProvider.SelectKeyWithAffinity(group.ID, affinityHash)
+	} else if retryCount > 0 {
+		// On retry, exclude the last failed key to ensure we try a different one
+		var excludeKeyID uint
+		if failedKeyID, exists := c.Get("last_failed_key_id"); exists {
+			excludeKeyID = failedKeyID.(uint)
+		}
+		if excludeKeyID > 0 {
+			apiKey, err = ps.keyProvider.SelectKeyExclude(group.ID, excludeKeyID)
+		} else {
+			apiKey, err = ps.keyProvider.SelectKey(group.ID)
+		}
+	} else {
+		apiKey, err = ps.keyProvider.SelectKey(group.ID)
+	}
 	if err != nil {
 		logrus.Errorf("Failed to select a key for group %s on attempt %d: %v", group.Name, retryCount+1, err)
 		response.Error(c, app_errors.NewAPIError(app_errors.ErrNoKeysAvailable, err.Error()))
@@ -257,12 +301,21 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			return
 		}
 
+		// Store the failed key ID for retry exclusion
+		c.Set("last_failed_key_id", apiKey.ID)
+
 		ps.executeRequestWithRetry(c, channelHandler, originalGroup, group, bodyBytes, isStream, startTime, retryCount+1)
 		return
 	}
 
 	// ps.keyProvider.UpdateStatus(apiKey, group, true) // 请求成功不再重置成功次数，减少IO消耗
 	logrus.Debugf("Request for group %s succeeded on attempt %d with key %s", group.Name, retryCount+1, utils.MaskAPIKey(apiKey.KeyValue))
+
+	// Update affinity mapping on success
+	// On retry (fallback), this updates the mapping to the new working key
+	if affinityHash != "" {
+		ps.keyProvider.UpdateAffinityMapping(group.ID, affinityHash, apiKey.ID, affinityTTL)
+	}
 
 	// Check if this is a model list request (needs special handling)
 	if shouldInterceptModelList(c.Request.URL.Path, c.Request.Method) {

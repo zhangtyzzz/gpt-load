@@ -94,6 +94,16 @@ func (gm *GroupManager) Initialize() error {
 				g.HeaderRuleList = []models.HeaderRule{}
 			}
 
+			// Parse affinity rules with error handling
+			if len(group.AffinityRules) > 0 {
+				if err := json.Unmarshal(group.AffinityRules, &g.AffinityRuleList); err != nil {
+					logrus.WithError(err).WithField("group_name", g.Name).Warn("Failed to parse affinity rules for group")
+					g.AffinityRuleList = []models.AffinityRule{}
+				}
+			} else {
+				g.AffinityRuleList = []models.AffinityRule{}
+			}
+
 			// Parse model redirect rules with error handling
 			g.ModelRedirectMap = make(map[string]string)
 			if len(group.ModelRedirectRules) > 0 {
@@ -134,6 +144,7 @@ func (gm *GroupManager) Initialize() error {
 				"group_name":                 g.Name,
 				"effective_config":           g.EffectiveConfig,
 				"header_rules_count":         len(g.HeaderRuleList),
+				"affinity_rules_count":       len(g.AffinityRuleList),
 				"model_redirect_rules_count": len(g.ModelRedirectMap),
 				"model_redirect_strict":      g.ModelRedirectStrict,
 				"sub_group_count":            len(g.SubGroups),

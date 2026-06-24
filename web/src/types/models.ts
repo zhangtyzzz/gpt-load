@@ -39,6 +39,26 @@ export interface HeaderRule {
   action: "set" | "remove";
 }
 
+// 亲和性规则相关类型
+export interface AffinityKeySource {
+  type: "header" | "body_json" | "body_regex";
+  key?: string;     // Header name (for type "header")
+  path?: string;    // JSON path (for type "body_json")
+  pattern?: string; // Regex pattern (for type "body_regex")
+}
+
+export interface AffinityMatchRule {
+  path_regex?: string;
+  model_regex?: string;
+}
+
+export interface AffinityRule {
+  name: string;
+  match: AffinityMatchRule;
+  key_source: AffinityKeySource;
+  ttl_seconds?: number;
+}
+
 // 子分组配置（创建/更新时使用）
 export interface SubGroupConfig {
   group_id: number;
@@ -79,6 +99,7 @@ export interface Group {
   model_redirect_rules: Record<string, string>;
   model_redirect_strict: boolean;
   header_rules?: HeaderRule[];
+  affinity_rules?: AffinityRule[];
   proxy_keys: string;
   group_type?: GroupType;
   sub_groups?: SubGroupInfo[]; // 子分组列表（仅聚合分组）
