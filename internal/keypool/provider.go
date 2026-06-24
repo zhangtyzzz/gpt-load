@@ -38,55 +38,61 @@ func NewProvider(db *gorm.DB, store store.Store, settingsManager *config.SystemS
 
 // SelectKey 为指定的分组原子性地选择并轮换一个可用的 APIKey。
 func (p *KeyProvider) SelectKey(groupID uint) (*models.APIKey, error) {
+	return p.selectKeyInternal(groupID, 0)
+}
+
+// SelectKeyExclude 选择一个可用的 APIKey，但排除指定的 keyID。
+// 用于 retry 场景，避免重试时选中刚失败的 key。
+func (p *KeyProvider) SelectKeyExclude(groupID uint, excludeKeyID uint) (*models.APIKey, error) {
+	return p.selectKeyInternal(groupID, excludeKeyID)
+}
+
+func (p *KeyProvider) selectKeyInternal(groupID uint, excludeKeyID uint) (*models.APIKey, error) {
 	activeKeysListKey := fmt.Sprintf("group:%d:active_keys", groupID)
 
-	// 1. Atomically rotate the key ID from the list
-	keyIDStr, err := p.store.Rotate(activeKeysListKey)
+	// Get list length to limit retry attempts
+	listLen, err := p.store.LLen(activeKeysListKey)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, app_errors.ErrNoActiveKeys
+		return nil, fmt.Errorf("failed to get active keys list length: %w", err)
+	}
+	if listLen == 0 {
+		return nil, app_errors.ErrNoActiveKeys
+	}
+
+	// Try up to listLen times to find a key that isn't excluded
+	var keyIDStr string
+	maxAttempts := int(listLen)
+	if excludeKeyID > 0 && maxAttempts > 1 {
+		// Only need to try once extra if we're excluding
+		maxAttempts = 2
+	}
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		keyIDStr, err = p.store.Rotate(activeKeysListKey)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, app_errors.ErrNoActiveKeys
+			}
+			return nil, fmt.Errorf("failed to rotate key from store: %w", err)
 		}
-		return nil, fmt.Errorf("failed to rotate key from store: %w", err)
+
+		keyID, parseErr := strconv.ParseUint(keyIDStr, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse key ID '%s': %w", keyIDStr, parseErr)
+		}
+
+		// If this is the excluded key and we have other options, try again
+		if excludeKeyID > 0 && uint(keyID) == excludeKeyID && listLen > 1 {
+			continue
+		}
+
+		// Found a valid key (or it's the only one available)
+		return p.getKeyByID(uint(keyID))
 	}
 
-	keyID, err := strconv.ParseUint(keyIDStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse key ID '%s': %w", keyIDStr, err)
-	}
-
-	// 2. Get key details from HASH
-	keyHashKey := fmt.Sprintf("key:%d", keyID)
-	keyDetails, err := p.store.HGetAll(keyHashKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key details for key ID %d: %w", keyID, err)
-	}
-
-	// 3. Manually unmarshal the map into an APIKey struct
-	failureCount, _ := strconv.ParseInt(keyDetails["failure_count"], 10, 64)
-	createdAt, _ := strconv.ParseInt(keyDetails["created_at"], 10, 64)
-
-	// Decrypt the key value for use by channels
-	encryptedKeyValue := keyDetails["key_string"]
-	decryptedKeyValue, err := p.encryptionSvc.Decrypt(encryptedKeyValue)
-	if err != nil {
-		// If decryption fails, try to use the value as-is (backward compatibility for unencrypted keys)
-		logrus.WithFields(logrus.Fields{
-			"keyID": keyID,
-			"error": err,
-		}).Debug("Failed to decrypt key value, using as-is for backward compatibility")
-		decryptedKeyValue = encryptedKeyValue
-	}
-
-	apiKey := &models.APIKey{
-		ID:           uint(keyID),
-		KeyValue:     decryptedKeyValue,
-		Status:       keyDetails["status"],
-		FailureCount: failureCount,
-		GroupID:      groupID,
-		CreatedAt:    time.Unix(createdAt, 0),
-	}
-
-	return apiKey, nil
+	// Fallback: shouldn't reach here, but if we do, return the last rotated key
+	keyID, _ := strconv.ParseUint(keyIDStr, 10, 64)
+	return p.getKeyByID(uint(keyID))
 }
 
 // SelectKeyWithAffinity 带亲和性的 key 选择。

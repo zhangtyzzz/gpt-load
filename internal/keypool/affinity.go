@@ -50,9 +50,8 @@ func (am *AffinityManager) ExtractValue(c *gin.Context, body []byte, model strin
 			if value != "" {
 				hash := ComputeAffinityHash(value)
 				logrus.WithFields(logrus.Fields{
-					"rule_name": rule.Name,
-					"value":     value,
-					"hash":      hash,
+					"rule_name":    rule.Name,
+					"affinityHash": hash[:8],
 				}).Debug("Affinity value extracted")
 				return AffinityResult{
 					Value:       value,

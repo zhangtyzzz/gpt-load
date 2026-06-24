@@ -157,6 +157,21 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	var err error
 	if affinityHash != "" && retryCount == 0 {
 		apiKey, err = ps.keyProvider.SelectKeyWithAffinity(group.ID, affinityHash)
+		if err == nil {
+			// Store the affinity key ID for retry exclusion
+			c.Set("affinity_key_id", apiKey.ID)
+		}
+	} else if retryCount > 0 {
+		// On retry, exclude the failed affinity key to ensure we try a different one
+		var excludeKeyID uint
+		if failedKeyID, exists := c.Get("affinity_key_id"); exists {
+			excludeKeyID = failedKeyID.(uint)
+		}
+		if excludeKeyID > 0 {
+			apiKey, err = ps.keyProvider.SelectKeyExclude(group.ID, excludeKeyID)
+		} else {
+			apiKey, err = ps.keyProvider.SelectKey(group.ID)
+		}
 	} else {
 		apiKey, err = ps.keyProvider.SelectKey(group.ID)
 	}
