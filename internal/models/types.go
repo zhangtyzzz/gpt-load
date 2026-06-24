@@ -40,6 +40,7 @@ type GroupConfig struct {
 	KeyValidationConcurrency     *int    `json:"key_validation_concurrency,omitempty"`
 	KeyValidationTimeoutSeconds  *int    `json:"key_validation_timeout_seconds,omitempty"`
 	EnableRequestBodyLogging     *bool   `json:"enable_request_body_logging,omitempty"`
+	KeyAffinityDefaultTTL        *int    `json:"key_affinity_default_ttl,omitempty"`
 }
 
 // HeaderRule defines a single rule for header manipulation.
@@ -47,6 +48,28 @@ type HeaderRule struct {
 	Key    string `json:"key"`
 	Value  string `json:"value"`
 	Action string `json:"action"` // "set" or "remove"
+}
+
+// AffinityKeySource defines how to extract the affinity value from a request.
+type AffinityKeySource struct {
+	Type    string `json:"type"`              // "header", "body_json", "body_regex"
+	Key     string `json:"key,omitempty"`     // Header name (for type "header")
+	Path    string `json:"path,omitempty"`    // JSON path (for type "body_json"), supports dot notation like "metadata.user_id"
+	Pattern string `json:"pattern,omitempty"` // Regex pattern with named capture group (?P<value>...) (for type "body_regex")
+}
+
+// AffinityMatchRule defines conditions for an affinity rule to match.
+type AffinityMatchRule struct {
+	PathRegex  string `json:"path_regex,omitempty"`  // Regex to match request path
+	ModelRegex string `json:"model_regex,omitempty"` // Regex to match model name
+}
+
+// AffinityRule defines a key affinity rule for a group.
+type AffinityRule struct {
+	Name      string            `json:"name"`                 // Rule name for identification
+	Match     AffinityMatchRule `json:"match"`                // Match conditions
+	KeySource AffinityKeySource `json:"key_source"`           // How to extract affinity value
+	TTL       int               `json:"ttl_seconds,omitempty"` // TTL override for this rule (seconds)
 }
 
 // GroupSubGroup 聚合分组和子分组的关联表
@@ -97,6 +120,7 @@ type Group struct {
 	ParamOverrides      datatypes.JSONMap    `gorm:"type:json" json:"param_overrides"`
 	Config              datatypes.JSONMap    `gorm:"type:json" json:"config"`
 	HeaderRules         datatypes.JSON       `gorm:"type:json" json:"header_rules"`
+	AffinityRules       datatypes.JSON       `gorm:"type:json" json:"affinity_rules"`
 	ModelRedirectRules  datatypes.JSONMap    `gorm:"type:json" json:"model_redirect_rules"`
 	ModelRedirectStrict bool                 `gorm:"default:false" json:"model_redirect_strict"`
 	APIKeys             []APIKey             `gorm:"foreignKey:GroupID" json:"api_keys"`
@@ -108,6 +132,7 @@ type Group struct {
 	// For cache
 	ProxyKeysMap              map[string]struct{}        `gorm:"-" json:"-"`
 	HeaderRuleList            []HeaderRule               `gorm:"-" json:"-"`
+	AffinityRuleList          []AffinityRule             `gorm:"-" json:"-"`
 	ModelRedirectMap          map[string]string          `gorm:"-" json:"-"`
 	FailoverStatusCodeMatcher failover.StatusCodeMatcher `gorm:"-" json:"-"`
 }

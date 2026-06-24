@@ -2,7 +2,7 @@
 import { keysApi } from "@/api/keys";
 import { settingsApi } from "@/api/settings";
 import ProxyKeysInput from "@/components/common/ProxyKeysInput.vue";
-import type { Group, GroupConfigOption, UpstreamInfo } from "@/types/models";
+import type { AffinityRule, Group, GroupConfigOption, UpstreamInfo } from "@/types/models";
 import { Add, Close, HelpCircleOutline, Remove } from "@vicons/ionicons5";
 import {
   NButton,
@@ -46,6 +46,22 @@ interface HeaderRuleItem {
   action: "set" | "remove";
 }
 
+// 亲和性规则类型
+interface AffinityRuleItem {
+  name: string;
+  match: {
+    path_regex: string;
+    model_regex: string;
+  };
+  key_source: {
+    type: "header" | "body_json" | "body_regex";
+    key: string;
+    path: string;
+    pattern: string;
+  };
+  ttl_seconds: number | null;
+}
+
 const props = withDefaults(defineProps<Props>(), {
   group: null,
 });
@@ -77,6 +93,7 @@ interface GroupFormData {
   config: Record<string, number | string | boolean>;
   configItems: ConfigItem[];
   header_rules: HeaderRuleItem[];
+  affinity_rules: AffinityRuleItem[];
   proxy_keys: string;
   group_type?: string;
 }
@@ -102,6 +119,7 @@ const formData = reactive<GroupFormData>({
   config: {},
   configItems: [] as ConfigItem[],
   header_rules: [] as HeaderRuleItem[],
+  affinity_rules: [] as AffinityRuleItem[],
   proxy_keys: "",
   group_type: "standard",
 });
@@ -303,6 +321,7 @@ function resetForm() {
     config: {},
     configItems: [],
     header_rules: [],
+    affinity_rules: [],
     proxy_keys: "",
     group_type: "standard",
   });
@@ -348,6 +367,20 @@ function loadGroupData() {
       key: rule.key || "",
       value: rule.value || "",
       action: (rule.action as "set" | "remove") || "set",
+    })),
+    affinity_rules: (props.group.affinity_rules || []).map((rule: AffinityRule) => ({
+      name: rule.name || "",
+      match: {
+        path_regex: rule.match?.path_regex || "",
+        model_regex: rule.match?.model_regex || "",
+      },
+      key_source: {
+        type: rule.key_source?.type || "header",
+        key: rule.key_source?.key || "",
+        path: rule.key_source?.path || "",
+        pattern: rule.key_source?.pattern || "",
+      },
+      ttl_seconds: rule.ttl_seconds || null,
     })),
     proxy_keys: props.group.proxy_keys || "",
     group_type: props.group.group_type || "standard",
@@ -412,6 +445,36 @@ function addHeaderRule() {
 // 删除Header规则
 function removeHeaderRule(index: number) {
   formData.header_rules.splice(index, 1);
+}
+
+// 亲和性规则 source type 选项
+const affinitySourceTypeOptions = [
+  { label: "Header", value: "header" },
+  { label: "Body JSON", value: "body_json" },
+  { label: "Body Regex", value: "body_regex" },
+];
+
+// 添加亲和性规则
+function addAffinityRule() {
+  formData.affinity_rules.push({
+    name: "",
+    match: {
+      path_regex: "",
+      model_regex: "",
+    },
+    key_source: {
+      type: "header",
+      key: "",
+      path: "",
+      pattern: "",
+    },
+    ttl_seconds: null,
+  });
+}
+
+// 删除亲和性规则
+function removeAffinityRule(index: number) {
+  formData.affinity_rules.splice(index, 1);
 }
 
 // 规范化Header Key到Canonical格式（模拟HTTP标准）
@@ -537,6 +600,22 @@ async function handleSubmit() {
           key: rule.key.trim(),
           value: rule.value,
           action: rule.action,
+        })),
+      affinity_rules: formData.affinity_rules
+        .filter((rule: AffinityRuleItem) => rule.name.trim())
+        .map((rule: AffinityRuleItem) => ({
+          name: rule.name.trim(),
+          match: {
+            path_regex: rule.match.path_regex || undefined,
+            model_regex: rule.match.model_regex || undefined,
+          },
+          key_source: {
+            type: rule.key_source.type,
+            key: rule.key_source.type === "header" ? rule.key_source.key : undefined,
+            path: rule.key_source.type === "body_json" ? rule.key_source.path : undefined,
+            pattern: rule.key_source.type === "body_regex" ? rule.key_source.pattern : undefined,
+          },
+          ttl_seconds: rule.ttl_seconds || undefined,
         })),
       proxy_keys: formData.proxy_keys,
     };
@@ -1083,6 +1162,129 @@ async function handleSubmit() {
                 </div>
               </div>
 
+              <!-- Key 亲和性规则 -->
+              <div class="config-section">
+                <h5 class="config-title-with-tooltip">
+                  {{ t("keys.keyAffinity") }}
+                  <n-tooltip trigger="hover" placement="top">
+                    <template #trigger>
+                      <n-icon :component="HelpCircleOutline" class="help-icon config-help" />
+                    </template>
+                    {{ t("keys.keyAffinityTooltip") }}
+                  </n-tooltip>
+                </h5>
+
+                <div class="affinity-rules-items">
+                  <div
+                    v-for="(rule, index) in formData.affinity_rules"
+                    :key="index"
+                    class="affinity-rule-card"
+                  >
+                    <div class="affinity-rule-header">
+                      <span class="affinity-rule-title">{{ t("keys.addAffinityRule") }} {{ index + 1 }}</span>
+                      <n-button
+                        @click="removeAffinityRule(index)"
+                        type="error"
+                        quaternary
+                        circle
+                        size="small"
+                      >
+                        <template #icon>
+                          <n-icon :component="Remove" />
+                        </template>
+                      </n-button>
+                    </div>
+
+                    <div class="affinity-rule-body">
+                      <!-- 规则名称 -->
+                      <div class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinityRuleName") }}</span>
+                        <n-input
+                          v-model:value="rule.name"
+                          :placeholder="t('keys.affinityRuleNamePlaceholder')"
+                          size="small"
+                        />
+                      </div>
+
+                      <!-- 匹配条件 -->
+                      <div class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinityMatchPathRegex") }}</span>
+                        <n-input
+                          v-model:value="rule.match.path_regex"
+                          :placeholder="t('keys.affinityMatchPathRegexPlaceholder')"
+                          size="small"
+                        />
+                      </div>
+                      <div class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinityMatchModelRegex") }}</span>
+                        <n-input
+                          v-model:value="rule.match.model_regex"
+                          :placeholder="t('keys.affinityMatchModelRegexPlaceholder')"
+                          size="small"
+                        />
+                      </div>
+
+                      <!-- 提取源类型 -->
+                      <div class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinitySourceType") }}</span>
+                        <n-select
+                          v-model:value="rule.key_source.type"
+                          :options="affinitySourceTypeOptions"
+                          size="small"
+                        />
+                      </div>
+
+                      <!-- 根据类型显示不同的输入框 -->
+                      <div v-if="rule.key_source.type === 'header'" class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinitySourceKey") }}</span>
+                        <n-input
+                          v-model:value="rule.key_source.key"
+                          :placeholder="t('keys.affinitySourceKeyPlaceholder')"
+                          size="small"
+                        />
+                      </div>
+                      <div v-if="rule.key_source.type === 'body_json'" class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinitySourcePath") }}</span>
+                        <n-input
+                          v-model:value="rule.key_source.path"
+                          :placeholder="t('keys.affinitySourcePathPlaceholder')"
+                          size="small"
+                        />
+                      </div>
+                      <div v-if="rule.key_source.type === 'body_regex'" class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinitySourcePattern") }}</span>
+                        <n-input
+                          v-model:value="rule.key_source.pattern"
+                          :placeholder="t('keys.affinitySourcePatternPlaceholder')"
+                          size="small"
+                        />
+                      </div>
+
+                      <!-- TTL -->
+                      <div class="affinity-row">
+                        <span class="affinity-label">{{ t("keys.affinityTTL") }}</span>
+                        <n-input-number
+                          v-model:value="rule.ttl_seconds"
+                          :placeholder="t('keys.affinityTTLPlaceholder')"
+                          :min="0"
+                          size="small"
+                          style="width: 100%"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="margin-top: 12px; padding-left: 120px">
+                  <n-button @click="addAffinityRule" dashed style="width: 100%">
+                    <template #icon>
+                      <n-icon :component="Add" />
+                    </template>
+                    {{ t("keys.addAffinityRule") }}
+                  </n-button>
+                </div>
+              </div>
+
               <!-- 模型重定向配置 -->
               <div v-if="formData.group_type !== 'aggregate'" class="config-section">
                 <n-form-item path="model_redirect_strict">
@@ -1564,6 +1766,75 @@ async function handleSubmit() {
 
   .header-actions {
     justify-content: flex-end;
+  }
+}
+
+/* 亲和性规则样式 */
+.affinity-rules-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.affinity-rule-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background-color: var(--bg-secondary);
+}
+
+.affinity-rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.affinity-rule-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.affinity-rule-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.affinity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.affinity-label {
+  flex: 0 0 100px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.affinity-row .n-input,
+.affinity-row .n-select,
+.affinity-row .n-input-number {
+  flex: 1;
+}
+
+@media (max-width: 768px) {
+  .affinity-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .affinity-label {
+    text-align: left;
+    flex: auto;
   }
 }
 </style>

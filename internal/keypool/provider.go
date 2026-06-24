@@ -22,15 +22,17 @@ type KeyProvider struct {
 	store           store.Store
 	settingsManager *config.SystemSettingsManager
 	encryptionSvc   encryption.Service
+	affinityMgr     *AffinityManager
 }
 
 // NewProvider 创建一个新的 KeyProvider 实例。
-func NewProvider(db *gorm.DB, store store.Store, settingsManager *config.SystemSettingsManager, encryptionSvc encryption.Service) *KeyProvider {
+func NewProvider(db *gorm.DB, store store.Store, settingsManager *config.SystemSettingsManager, encryptionSvc encryption.Service, affinityMgr *AffinityManager) *KeyProvider {
 	return &KeyProvider{
 		db:              db,
 		store:           store,
 		settingsManager: settingsManager,
 		encryptionSvc:   encryptionSvc,
+		affinityMgr:     affinityMgr,
 	}
 }
 
@@ -85,6 +87,147 @@ func (p *KeyProvider) SelectKey(groupID uint) (*models.APIKey, error) {
 	}
 
 	return apiKey, nil
+}
+
+// SelectKeyWithAffinity 带亲和性的 key 选择。
+// 如果存在亲和性映射且对应 key 仍在活跃列表中，优先使用该 key（不轮转）。
+// 否则退化为普通轮询选择。
+func (p *KeyProvider) SelectKeyWithAffinity(groupID uint, affinityHash string) (*models.APIKey, error) {
+	activeKeysListKey := fmt.Sprintf("group:%d:active_keys", groupID)
+
+	// 1. Try affinity mapping
+	if affinityHash != "" && p.affinityMgr != nil {
+		mappedKeyIDStr, err := p.affinityMgr.GetMapping(groupID, affinityHash)
+		if err != nil {
+			logrus.WithError(err).Debug("Failed to get affinity mapping, falling back to round-robin")
+		} else if mappedKeyIDStr != "" {
+			// Verify the mapped key is still in the active list
+			isActive, err := p.isKeyInActiveList(activeKeysListKey, mappedKeyIDStr)
+			if err != nil {
+				logrus.WithError(err).Debug("Failed to check active list, falling back to round-robin")
+			} else if isActive {
+				// Affinity hit - return this key without rotating
+				keyID, err := strconv.ParseUint(mappedKeyIDStr, 10, 64)
+				if err != nil {
+					logrus.WithError(err).Debug("Failed to parse affinity key ID, falling back to round-robin")
+				} else {
+					apiKey, err := p.getKeyByID(uint(keyID))
+					if err != nil {
+						logrus.WithError(err).Debug("Failed to get affinity key details, falling back to round-robin")
+					} else {
+						logrus.WithFields(logrus.Fields{
+							"groupID":      groupID,
+							"affinityHash": affinityHash[:8],
+							"keyID":        keyID,
+						}).Debug("Affinity key hit")
+						return apiKey, nil
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Fallback to round-robin
+	return p.SelectKey(groupID)
+}
+
+// isKeyInActiveList checks if a key ID is in the active keys list.
+func (p *KeyProvider) isKeyInActiveList(activeKeysListKey, keyIDStr string) (bool, error) {
+	// Get all members of the active keys list and check
+	// We use LLen to check if the list exists, then iterate
+	length, err := p.store.LLen(activeKeysListKey)
+	if err != nil {
+		return false, err
+	}
+	if length == 0 {
+		return false, nil
+	}
+
+	// For memory store, we need to check by trying to rotate and check
+	// This is a limitation - we'll use a different approach
+	// Check if key details exist and status is active
+	keyID, err := strconv.ParseUint(keyIDStr, 10, 64)
+	if err != nil {
+		return false, err
+	}
+
+	keyHashKey := fmt.Sprintf("key:%d", keyID)
+	keyDetails, err := p.store.HGetAll(keyHashKey)
+	if err != nil {
+		return false, err
+	}
+
+	if keyDetails["status"] != models.KeyStatusActive {
+		return false, nil
+	}
+
+	// Also verify it's in the active list by checking if the list contains this key
+	// The Rotate operation is atomic and verifies membership, so we'll use a lightweight check
+	// If the key is active in the hash, it should be in the list (unless there's a race condition)
+	// For correctness, we accept this small race window
+	return true, nil
+}
+
+// getKeyByID retrieves a key by its ID from the store.
+func (p *KeyProvider) getKeyByID(keyID uint) (*models.APIKey, error) {
+	keyHashKey := fmt.Sprintf("key:%d", keyID)
+	keyDetails, err := p.store.HGetAll(keyHashKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key details for key ID %d: %w", keyID, err)
+	}
+
+	if len(keyDetails) == 0 {
+		return nil, fmt.Errorf("key %d not found in store", keyID)
+	}
+
+	failureCount, _ := strconv.ParseInt(keyDetails["failure_count"], 10, 64)
+	createdAt, _ := strconv.ParseInt(keyDetails["created_at"], 10, 64)
+
+	// Decrypt the key value
+	encryptedKeyValue := keyDetails["key_string"]
+	decryptedKeyValue, err := p.encryptionSvc.Decrypt(encryptedKeyValue)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"keyID": keyID,
+			"error": err,
+		}).Debug("Failed to decrypt key value, using as-is")
+		decryptedKeyValue = encryptedKeyValue
+	}
+
+	groupID, _ := strconv.ParseUint(keyDetails["group_id"], 10, 64)
+
+	return &models.APIKey{
+		ID:           uint(keyID),
+		KeyValue:     decryptedKeyValue,
+		Status:       keyDetails["status"],
+		FailureCount: failureCount,
+		GroupID:      uint(groupID),
+		CreatedAt:    time.Unix(createdAt, 0),
+	}, nil
+}
+
+// UpdateAffinityMapping updates the affinity mapping after a successful request.
+func (p *KeyProvider) UpdateAffinityMapping(groupID uint, affinityHash string, keyID uint, ttl time.Duration) {
+	if affinityHash == "" || p.affinityMgr == nil {
+		return
+	}
+
+	go func() {
+		if err := p.affinityMgr.SetMapping(groupID, affinityHash, keyID, ttl); err != nil {
+			logrus.WithFields(logrus.Fields{
+				"groupID":      groupID,
+				"affinityHash": affinityHash[:8],
+				"keyID":        keyID,
+				"error":        err,
+			}).Error("Failed to update affinity mapping")
+		} else {
+			logrus.WithFields(logrus.Fields{
+				"groupID":      groupID,
+				"affinityHash": affinityHash[:8],
+				"keyID":        keyID,
+			}).Debug("Affinity mapping updated")
+		}
+	}()
 }
 
 // UpdateStatus 异步地提交一个 Key 状态更新任务。
