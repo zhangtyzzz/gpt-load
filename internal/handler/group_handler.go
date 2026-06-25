@@ -48,15 +48,15 @@ func (s *Server) handleGroupError(c *gin.Context, err error) bool {
 
 // GroupCreateRequest defines the payload for creating a group.
 type GroupCreateRequest struct {
-	Name                string              `json:"name"`
-	DisplayName         string              `json:"display_name"`
-	Description         string              `json:"description"`
-	GroupType           string              `json:"group_type"` // 'standard' or 'aggregate'
-	Upstreams           json.RawMessage     `json:"upstreams"`
-	ChannelType         string              `json:"channel_type"`
-	Sort                int                 `json:"sort"`
-	TestModel           string              `json:"test_model"`
-	ValidationEndpoint  string              `json:"validation_endpoint"`
+	Name                string                `json:"name"`
+	DisplayName         string                `json:"display_name"`
+	Description         string                `json:"description"`
+	GroupType           string                `json:"group_type"` // 'standard' or 'aggregate'
+	Upstreams           json.RawMessage       `json:"upstreams"`
+	ChannelType         string                `json:"channel_type"`
+	Sort                int                   `json:"sort"`
+	TestModel           string                `json:"test_model"`
+	ValidationEndpoint  string                `json:"validation_endpoint"`
 	ParamOverrides      map[string]any        `json:"param_overrides"`
 	ModelRedirectRules  map[string]string     `json:"model_redirect_rules"`
 	ModelRedirectStrict bool                  `json:"model_redirect_strict"`
@@ -397,6 +397,21 @@ func (s *Server) GetGroupStats(c *gin.Context) {
 	}
 
 	response.Success(c, stats)
+}
+
+func (s *Server) GetGroupEffectiveErrorPolicy(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		response.ErrorI18nFromAPIError(c, app_errors.ErrBadRequest, "validation.invalid_group_id")
+		return
+	}
+
+	policy, err := s.GroupService.GetEffectiveErrorPolicy(c.Request.Context(), uint(id))
+	if s.handleGroupError(c, err) {
+		return
+	}
+
+	response.Success(c, policy)
 }
 
 // GroupCopyRequest defines the payload for copying a group.

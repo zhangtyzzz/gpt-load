@@ -14,6 +14,7 @@ import (
 	"gpt-load/internal/channel"
 	"gpt-load/internal/config"
 	"gpt-load/internal/encryption"
+	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/keypool"
 	"gpt-load/internal/models"
@@ -158,16 +159,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	if affinityHash != "" && retryCount == 0 {
 		apiKey, err = ps.keyProvider.SelectKeyWithAffinity(group.ID, affinityHash)
 	} else if retryCount > 0 {
-		// On retry, exclude the last failed key to ensure we try a different one
-		var excludeKeyID uint
-		if failedKeyID, exists := c.Get("last_failed_key_id"); exists {
-			excludeKeyID = failedKeyID.(uint)
-		}
-		if excludeKeyID > 0 {
-			apiKey, err = ps.keyProvider.SelectKeyExclude(group.ID, excludeKeyID)
-		} else {
-			apiKey, err = ps.keyProvider.SelectKey(group.ID)
-		}
+		apiKey, err = ps.keyProvider.SelectKeyExcludeSet(group.ID, getAttemptedKeyIDs(c))
 	} else {
 		apiKey, err = ps.keyProvider.SelectKey(group.ID)
 	}
@@ -244,10 +236,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 		defer resp.Body.Close()
 	}
 
-	// Unified error handling for retries.
-	// Retry policy is fully defined by group.FailoverStatusCodeMatcher (derived from EffectiveConfig).
-	shouldRetryByStatus := resp != nil && shouldFailoverOnStatusCode(resp.StatusCode, group)
-	if err != nil || shouldRetryByStatus {
+	if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
 		if err != nil && app_errors.IsIgnorableError(err) {
 			logrus.Debugf("Client-side ignorable error for key %s, aborting retries: %v", utils.MaskAPIKey(apiKey.KeyValue), err)
 			ps.logRequest(c, originalGroup, group, apiKey, startTime, 499, err, isStream, upstreamURL, channelHandler, bodyBytes, models.RequestTypeFinal)
@@ -278,20 +267,29 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			logrus.Debugf("Request failed with status %d (attempt %d/%d) for key %s. Parsed Error: %s", statusCode, retryCount+1, cfg.MaxRetries, utils.MaskAPIKey(apiKey.KeyValue), parsedError)
 		}
 
-		// 使用解析后的错误信息更新密钥状态
-		ps.keyProvider.UpdateStatus(apiKey, group, false, parsedError)
+		policy := group.ErrorPolicy
+		if len(policy.Rules) == 0 && policy.Default == nil {
+			policy = errorpolicy.DefaultPolicy()
+		}
+		decision := policy.Decide(statusCode)
+		cooldown := cooldownDuration(decision, resp)
+		if healthErr := ps.keyProvider.ApplyHealthAction(apiKey, group, decision.Health, cooldown); healthErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"keyID":  apiKey.ID,
+				"health": decision.Health,
+				"error":  healthErr,
+			}).Error("Failed to apply error policy health action")
+		}
 
-		// 判断是否为最后一次尝试
-		isLastAttempt := retryCount >= cfg.MaxRetries
+		shouldRetry := decision.OnRequest == errorpolicy.RequestActionRetryOtherKey && retryCount < cfg.MaxRetries
 		requestType := models.RequestTypeRetry
-		if isLastAttempt {
+		if !shouldRetry {
 			requestType = models.RequestTypeFinal
 		}
 
 		ps.logRequest(c, originalGroup, group, apiKey, startTime, statusCode, errors.New(parsedError), isStream, upstreamURL, channelHandler, bodyBytes, requestType)
 
-		// 如果是最后一次尝试，直接返回错误，不再递归
-		if isLastAttempt {
+		if !shouldRetry {
 			var errorJSON map[string]any
 			if err := json.Unmarshal([]byte(errorMessage), &errorJSON); err == nil {
 				c.JSON(statusCode, errorJSON)
@@ -301,8 +299,9 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			return
 		}
 
-		// Store the failed key ID for retry exclusion
-		c.Set("last_failed_key_id", apiKey.ID)
+		attemptedKeyIDs := getAttemptedKeyIDs(c)
+		attemptedKeyIDs[apiKey.ID] = struct{}{}
+		c.Set("attempted_key_ids", attemptedKeyIDs)
 
 		ps.executeRequestWithRetry(c, channelHandler, originalGroup, group, bodyBytes, isStream, startTime, retryCount+1)
 		return
@@ -336,13 +335,6 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	}
 
 	ps.logRequest(c, originalGroup, group, apiKey, startTime, resp.StatusCode, nil, isStream, upstreamURL, channelHandler, bodyBytes, models.RequestTypeFinal)
-}
-
-func shouldFailoverOnStatusCode(statusCode int, group *models.Group) bool {
-	if group == nil {
-		return false
-	}
-	return group.FailoverStatusCodeMatcher.Match(statusCode)
 }
 
 // logRequest is a helper function to create and record a request log.

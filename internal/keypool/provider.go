@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gpt-load/internal/config"
 	"gpt-load/internal/encryption"
+	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
@@ -38,16 +39,25 @@ func NewProvider(db *gorm.DB, store store.Store, settingsManager *config.SystemS
 
 // SelectKey 为指定的分组原子性地选择并轮换一个可用的 APIKey。
 func (p *KeyProvider) SelectKey(groupID uint) (*models.APIKey, error) {
-	return p.selectKeyInternal(groupID, 0)
+	return p.selectKeyInternal(groupID, nil)
 }
 
 // SelectKeyExclude 选择一个可用的 APIKey，但排除指定的 keyID。
 // 用于 retry 场景，避免重试时选中刚失败的 key。
 func (p *KeyProvider) SelectKeyExclude(groupID uint, excludeKeyID uint) (*models.APIKey, error) {
-	return p.selectKeyInternal(groupID, excludeKeyID)
+	excluded := make(map[uint]struct{})
+	if excludeKeyID > 0 {
+		excluded[excludeKeyID] = struct{}{}
+	}
+	return p.selectKeyInternal(groupID, excluded)
 }
 
-func (p *KeyProvider) selectKeyInternal(groupID uint, excludeKeyID uint) (*models.APIKey, error) {
+// SelectKeyExcludeSet selects an available API key while excluding all keys already tried by the request.
+func (p *KeyProvider) SelectKeyExcludeSet(groupID uint, excluded map[uint]struct{}) (*models.APIKey, error) {
+	return p.selectKeyInternal(groupID, excluded)
+}
+
+func (p *KeyProvider) selectKeyInternal(groupID uint, excluded map[uint]struct{}) (*models.APIKey, error) {
 	activeKeysListKey := fmt.Sprintf("group:%d:active_keys", groupID)
 
 	// Get list length to limit retry attempts
@@ -59,16 +69,11 @@ func (p *KeyProvider) selectKeyInternal(groupID uint, excludeKeyID uint) (*model
 		return nil, app_errors.ErrNoActiveKeys
 	}
 
-	// Try up to listLen times to find a key that isn't excluded
-	var keyIDStr string
+	// Try up to listLen times to find a key that is active, not excluded, and not cooling down.
 	maxAttempts := int(listLen)
-	if excludeKeyID > 0 && maxAttempts > 1 {
-		// Only need to try once extra if we're excluding
-		maxAttempts = 2
-	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		keyIDStr, err = p.store.Rotate(activeKeysListKey)
+		keyIDStr, err := p.store.Rotate(activeKeysListKey)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, app_errors.ErrNoActiveKeys
@@ -81,18 +86,32 @@ func (p *KeyProvider) selectKeyInternal(groupID uint, excludeKeyID uint) (*model
 			return nil, fmt.Errorf("failed to parse key ID '%s': %w", keyIDStr, parseErr)
 		}
 
-		// If this is the excluded key and we have other options, try again
-		if excludeKeyID > 0 && uint(keyID) == excludeKeyID && listLen > 1 {
+		keyIDUint := uint(keyID)
+		if _, skip := excluded[keyIDUint]; skip {
 			continue
 		}
 
-		// Found a valid key (or it's the only one available)
-		return p.getKeyByID(uint(keyID))
+		coolingDown, cooldownErr := p.IsCoolingDown(keyIDUint)
+		if cooldownErr != nil {
+			logrus.WithFields(logrus.Fields{"keyID": keyIDUint, "error": cooldownErr}).Warn("Failed to check key cooldown state")
+			continue
+		}
+		if coolingDown {
+			continue
+		}
+
+		apiKey, getErr := p.getKeyByID(keyIDUint)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if apiKey.Status != models.KeyStatusActive {
+			continue
+		}
+
+		return apiKey, nil
 	}
 
-	// Fallback: shouldn't reach here, but if we do, return the last rotated key
-	keyID, _ := strconv.ParseUint(keyIDStr, 10, 64)
-	return p.getKeyByID(uint(keyID))
+	return nil, app_errors.ErrNoActiveKeys
 }
 
 // SelectKeyWithAffinity 带亲和性的 key 选择。
@@ -112,6 +131,18 @@ func (p *KeyProvider) SelectKeyWithAffinity(groupID uint, affinityHash string) (
 			if err != nil {
 				logrus.WithError(err).Debug("Failed to check active list, falling back to round-robin")
 			} else if isActive {
+				coolingDown, err := p.IsCoolingDown(uint(parseUintOrZero(mappedKeyIDStr)))
+				if err != nil {
+					logrus.WithError(err).Debug("Failed to check affinity key cooldown, falling back to round-robin")
+				} else if coolingDown {
+					logrus.WithFields(logrus.Fields{
+						"groupID":      groupID,
+						"affinityHash": affinityHash[:8],
+						"keyID":        mappedKeyIDStr,
+					}).Debug("Affinity key is cooling down, falling back to round-robin")
+					return p.SelectKey(groupID)
+				}
+
 				// Affinity hit - return this key without rotating
 				keyID, err := strconv.ParseUint(mappedKeyIDStr, 10, 64)
 				if err != nil {
@@ -259,6 +290,86 @@ func (p *KeyProvider) UpdateStatus(apiKey *models.APIKey, group *models.Group, i
 			}
 		}
 	}()
+}
+
+func (p *KeyProvider) ApplyHealthAction(apiKey *models.APIKey, group *models.Group, action errorpolicy.HealthAction, cooldown time.Duration) error {
+	if apiKey == nil || group == nil {
+		return nil
+	}
+
+	keyHashKey := fmt.Sprintf("key:%d", apiKey.ID)
+	activeKeysListKey := fmt.Sprintf("group:%d:active_keys", group.ID)
+
+	switch action {
+	case errorpolicy.HealthActionNoop:
+		return nil
+	case errorpolicy.HealthActionFailCountInc:
+		return p.handleFailure(apiKey, group, keyHashKey, activeKeysListKey)
+	case errorpolicy.HealthActionCooldown:
+		return p.handleCooldown(apiKey.ID, cooldown)
+	case errorpolicy.HealthActionBlacklistNow:
+		return p.handleBlacklistNow(apiKey.ID, keyHashKey, activeKeysListKey)
+	default:
+		return fmt.Errorf("unsupported health action: %s", action)
+	}
+}
+
+func (p *KeyProvider) IsCoolingDown(keyID uint) (bool, error) {
+	return p.store.Exists(cooldownStoreKey(keyID))
+}
+
+func (p *KeyProvider) handleCooldown(keyID uint, cooldown time.Duration) error {
+	if cooldown <= 0 {
+		cooldown = time.Duration(errorpolicy.DefaultCooldownSeconds) * time.Second
+	}
+
+	until := time.Now().Add(cooldown).Unix()
+	if err := p.store.Set(cooldownStoreKey(keyID), []byte(strconv.FormatInt(until, 10)), cooldown); err != nil {
+		return fmt.Errorf("failed to set key cooldown: %w", err)
+	}
+
+	logrus.WithFields(logrus.Fields{"keyID": keyID, "cooldown": cooldown.String()}).Debug("Key entered cooldown")
+	return nil
+}
+
+func (p *KeyProvider) handleBlacklistNow(keyID uint, keyHashKey, activeKeysListKey string) error {
+	keyDetails, err := p.store.HGetAll(keyHashKey)
+	if err != nil {
+		return fmt.Errorf("failed to get key details from store: %w", err)
+	}
+
+	if keyDetails["status"] == models.KeyStatusInvalid {
+		return nil
+	}
+
+	return p.executeTransactionWithRetry(func(tx *gorm.DB) error {
+		var key models.APIKey
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&key, keyID).Error; err != nil {
+			return fmt.Errorf("failed to lock key %d for update: %w", keyID, err)
+		}
+
+		if key.Status == models.KeyStatusInvalid {
+			return nil
+		}
+
+		if err := tx.Model(&key).Update("status", models.KeyStatusInvalid).Error; err != nil {
+			return fmt.Errorf("failed to update key status in DB: %w", err)
+		}
+
+		if err := p.store.LRem(activeKeysListKey, 0, keyID); err != nil {
+			return fmt.Errorf("failed to LRem key from active list: %w", err)
+		}
+		if err := p.store.HSet(keyHashKey, map[string]any{"status": models.KeyStatusInvalid}); err != nil {
+			return fmt.Errorf("failed to update key status to invalid in store: %w", err)
+		}
+
+		logrus.WithField("keyID", keyID).Warn("Key disabled immediately by error policy")
+		return nil
+	})
+}
+
+func cooldownStoreKey(keyID uint) string {
+	return fmt.Sprintf("key:%d:cooldown", keyID)
 }
 
 // executeTransactionWithRetry wraps a database transaction with a retry mechanism.
@@ -787,6 +898,11 @@ func (p *KeyProvider) apiKeyToMap(key *models.APIKey) map[string]any {
 		"group_id":      key.GroupID,
 		"created_at":    key.CreatedAt.Unix(),
 	}
+}
+
+func parseUintOrZero(value string) uint64 {
+	parsed, _ := strconv.ParseUint(value, 10, 64)
+	return parsed
 }
 
 // pluckIDs extracts IDs from a slice of APIKey.

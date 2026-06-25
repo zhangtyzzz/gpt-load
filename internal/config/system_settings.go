@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"gpt-load/internal/db"
+	"gpt-load/internal/errorpolicy"
 	"gpt-load/internal/failover"
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
@@ -37,6 +38,11 @@ func validateStringSettingValue(key, val string) error {
 	if key == "failover_status_codes" {
 		if _, err := failover.ParseStatusCodeMatcher(val); err != nil {
 			return fmt.Errorf("invalid value for %s (%q): %w", key, val, err)
+		}
+	}
+	if key == "error_policy" {
+		if _, err := errorpolicy.Parse(val); err != nil {
+			return fmt.Errorf("invalid value for %s: %w", key, err)
 		}
 	}
 	return nil
@@ -220,6 +226,7 @@ func (sm *SystemSettingsManager) UpdateSettings(settingsMap map[string]any) erro
 // GetEffectiveConfig 获取有效配置 (系统配置 + 分组覆盖)
 func (sm *SystemSettingsManager) GetEffectiveConfig(groupConfigJSON datatypes.JSONMap) types.SystemSettings {
 	effectiveConfig := sm.GetSettings()
+	systemErrorPolicy := effectiveConfig.ErrorPolicy
 
 	if groupConfigJSON == nil {
 		return effectiveConfig
@@ -239,9 +246,15 @@ func (sm *SystemSettingsManager) GetEffectiveConfig(groupConfigJSON datatypes.JS
 	gcv := reflect.ValueOf(groupConfig)
 	ecv := reflect.ValueOf(&effectiveConfig).Elem()
 
+	var groupErrorPolicy *string
 	for i := range gcv.NumField() {
 		groupField := gcv.Field(i)
 		if groupField.Kind() == reflect.Ptr && !groupField.IsNil() {
+			if gcv.Type().Field(i).Name == "ErrorPolicy" {
+				value := groupField.Elem().String()
+				groupErrorPolicy = &value
+				continue
+			}
 			groupFieldValue := groupField.Elem()
 			effectiveField := ecv.FieldByName(gcv.Type().Field(i).Name)
 			if effectiveField.IsValid() && effectiveField.CanSet() {
@@ -249,6 +262,16 @@ func (sm *SystemSettingsManager) GetEffectiveConfig(groupConfigJSON datatypes.JS
 					effectiveField.Set(groupFieldValue)
 				}
 			}
+		}
+	}
+
+	if groupErrorPolicy != nil {
+		mergedPolicy, err := errorpolicy.MergeJSON(systemErrorPolicy, *groupErrorPolicy)
+		if err != nil {
+			logrus.Warnf("Failed to merge group error policy, using system policy only. Error: %v", err)
+			effectiveConfig.ErrorPolicy = systemErrorPolicy
+		} else {
+			effectiveConfig.ErrorPolicy = mergedPolicy
 		}
 	}
 
@@ -390,8 +413,14 @@ func (sm *SystemSettingsManager) ValidateGroupConfigOverrides(configMap map[stri
 					}
 				}
 			}
-			if err := validateStringSettingValue(key, strVal); err != nil {
-				return err
+			if key == "error_policy" {
+				if _, err := errorpolicy.ParseOverride(strVal); err != nil {
+					return fmt.Errorf("invalid value for %s: %w", key, err)
+				}
+			} else {
+				if err := validateStringSettingValue(key, strVal); err != nil {
+					return err
+				}
 			}
 		case reflect.Bool:
 			_, ok := value.(bool)
@@ -426,7 +455,6 @@ func (sm *SystemSettingsManager) DisplaySystemConfig(settings types.SystemSettin
 	logrus.Info("  --- Key & Group Behavior ---")
 	logrus.Infof("    Max Retries: %d", settings.MaxRetries)
 	logrus.Infof("    Blacklist Threshold: %d", settings.BlacklistThreshold)
-	logrus.Infof("    Failover Status Codes: %s", settings.FailoverStatusCodes)
 	logrus.Infof("    Key Validation Interval: %d minutes", settings.KeyValidationIntervalMinutes)
 	logrus.Info("====================================")
 	logrus.Info("")

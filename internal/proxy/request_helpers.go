@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
+
+const maxRetryAfterCooldown = 24 * time.Hour
 
 func (ps *ProxyServer) applyParamOverrides(bodyBytes []byte, group *models.Group) ([]byte, error) {
 	if len(group.ParamOverrides) == 0 || len(bodyBytes) == 0 {
@@ -60,4 +66,47 @@ func handleGzipCompression(resp *http.Response, bodyBytes []byte) []byte {
 		return decompressedBody
 	}
 	return bodyBytes
+}
+
+func getAttemptedKeyIDs(c interface {
+	Get(string) (any, bool)
+}) map[uint]struct{} {
+	if existing, ok := c.Get("attempted_key_ids"); ok {
+		if attempted, ok := existing.(map[uint]struct{}); ok {
+			return attempted
+		}
+	}
+	return make(map[uint]struct{})
+}
+
+func cooldownDuration(decision errorpolicy.Decision, resp *http.Response) time.Duration {
+	if decision.Health != errorpolicy.HealthActionCooldown {
+		return 0
+	}
+
+	if resp != nil {
+		if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+			if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+				return minDuration(time.Duration(seconds)*time.Second, maxRetryAfterCooldown)
+			}
+			if retryAt, err := http.ParseTime(retryAfter); err == nil {
+				if duration := time.Until(retryAt); duration > 0 {
+					return minDuration(duration, maxRetryAfterCooldown)
+				}
+			}
+		}
+	}
+
+	seconds := decision.Params.CooldownSeconds
+	if seconds <= 0 {
+		seconds = errorpolicy.DefaultCooldownSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
