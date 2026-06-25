@@ -626,6 +626,22 @@ export default {
     current: "Current",
     clickToSwitch: "Click to switch to {mode}",
   },
+  errorPolicy: {
+    defaultRule: "Other status codes",
+    addRule: "Add status rule",
+    statusPlaceholder: "Status code or range, e.g. 429, 500, 502, 401-499",
+    cooldownSeconds: "Fallback cooldown seconds",
+    request: {
+      return: "Return error",
+      retryOtherKey: "Retry with another key",
+    },
+    health: {
+      noop: "Do not affect key",
+      failCountInc: "Add one failure",
+      cooldown: "Temporary cooldown",
+      blacklistNow: "Disable immediately",
+    },
+  },
   encryptionAlert: {
     title: "⚠️ Encryption Configuration Error",
     viewSolution: "View Solution",

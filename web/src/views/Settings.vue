@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { settingsApi, type Setting, type SettingCategory } from "@/api/settings";
+import ErrorPolicyEditor from "@/components/common/ErrorPolicyEditor.vue";
 import ProxyKeysInput from "@/components/common/ProxyKeysInput.vue";
 import { HelpCircle, Save } from "@vicons/ionicons5";
 import {
@@ -115,7 +116,7 @@ function generateValidationRules(item: Setting): FormItemRule[] {
             <n-grid-item
               v-for="item in category.settings"
               :key="item.key"
-              :span="item.key === 'proxy_keys' ? 3 : 1"
+              :span="item.key === 'proxy_keys' || item.key === 'error_policy' ? 4 : 1"
             >
               <n-form-item :path="item.key" :rule="generateValidationRules(item)">
                 <template #label>
@@ -155,6 +156,12 @@ function generateValidationRules(item: Setting): FormItemRule[] {
                   v-model="form[item.key] as string"
                   :placeholder="t('settings.inputContent')"
                   size="small"
+                />
+                <error-policy-editor
+                  v-else-if="item.key === 'error_policy'"
+                  :model-value="String(form[item.key] || '')"
+                  :show-default="true"
+                  @update:model-value="value => (form[item.key] = value)"
                 />
                 <n-input
                   v-else

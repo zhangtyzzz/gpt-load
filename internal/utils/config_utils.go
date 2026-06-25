@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"gpt-load/internal/errorpolicy"
 	"gpt-load/internal/models"
 	"gpt-load/internal/types"
 	"os"
@@ -24,6 +25,9 @@ func GenerateSettingsMetadata(s *types.SystemSettings) []models.SystemSettingInf
 
 		jsonTag := field.Tag.Get("json")
 		if jsonTag == "" || jsonTag == "-" {
+			continue
+		}
+		if jsonTag == "failover_status_codes" {
 			continue
 		}
 
@@ -49,12 +53,17 @@ func GenerateSettingsMetadata(s *types.SystemSettings) []models.SystemSettingInf
 			}
 		}
 
+		defaultValue := any(defaultTag)
+		if defaultTag == "" {
+			defaultValue = fieldValue.Interface()
+		}
+
 		info := models.SystemSettingInfo{
 			Key:          jsonTag,
 			Name:         nameTag,
 			Value:        fieldValue.Interface(),
 			Type:         field.Type.String(),
-			DefaultValue: defaultTag,
+			DefaultValue: defaultValue,
 			Description:  descTag,
 			Category:     categoryTag,
 			MinValue:     minValue,
@@ -85,6 +94,7 @@ func DefaultSystemSettings() types.SystemSettings {
 			}
 		}
 	}
+	s.ErrorPolicy = errorpolicy.DefaultPolicyJSON()
 	return s
 }
 

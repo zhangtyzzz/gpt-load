@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"gpt-load/internal/config"
-	"gpt-load/internal/failover"
+	"gpt-load/internal/errorpolicy"
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
 	"gpt-load/internal/syncer"
@@ -73,16 +73,15 @@ func (gm *GroupManager) Initialize() error {
 			g.EffectiveConfig = gm.settingsManager.GetEffectiveConfig(g.Config)
 			g.ProxyKeysMap = utils.StringToSet(g.ProxyKeys, ",")
 
-			matcher, err := failover.ParseStatusCodeMatcher(g.EffectiveConfig.FailoverStatusCodes)
+			policy, err := errorpolicy.Parse(g.EffectiveConfig.ErrorPolicy)
 			if err != nil {
 				logrus.WithFields(logrus.Fields{
 					"group_name": g.Name,
-					"spec":       g.EffectiveConfig.FailoverStatusCodes,
 					"error":      err,
-				}).Warn("Invalid failover status codes spec, ignoring")
-			} else {
-				g.FailoverStatusCodeMatcher = matcher
+				}).Warn("Invalid effective error policy, using built-in default")
+				policy = errorpolicy.DefaultPolicy()
 			}
+			g.ErrorPolicy = policy
 
 			// Parse header rules with error handling
 			if len(group.HeaderRules) > 0 {

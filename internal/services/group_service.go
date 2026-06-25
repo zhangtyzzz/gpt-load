@@ -15,6 +15,7 @@ import (
 	"gpt-load/internal/channel"
 	"gpt-load/internal/config"
 	"gpt-load/internal/encryption"
+	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"gpt-load/internal/utils"
@@ -679,6 +680,21 @@ func (s *GroupService) GetGroupStats(ctx context.Context, groupID uint) (*GroupS
 	return s.getStandardGroupStats(ctx, groupID)
 }
 
+func (s *GroupService) GetEffectiveErrorPolicy(ctx context.Context, groupID uint) (*errorpolicy.Policy, error) {
+	var group models.Group
+	if err := s.db.WithContext(ctx).First(&group, groupID).Error; err != nil {
+		return nil, app_errors.ParseDBError(err)
+	}
+
+	effectiveConfig := s.settingsManager.GetEffectiveConfig(group.Config)
+	policy, err := errorpolicy.Parse(effectiveConfig.ErrorPolicy)
+	if err != nil {
+		return nil, NewI18nError(app_errors.ErrValidation, "error.invalid_config_format", map[string]any{"error": err.Error()})
+	}
+
+	return &policy, nil
+}
+
 // queryGroupHourlyStats queries aggregated hourly statistics from group_hourly_stats table
 func (s *GroupService) queryGroupHourlyStats(ctx context.Context, groupID uint, hours int) (RequestStats, error) {
 	var result struct {
@@ -852,6 +868,9 @@ func (s *GroupService) GetGroupConfigOptions() ([]ConfigOption, error) {
 		var defaultValue any
 		if fieldName, ok := jsonToFieldMap[key]; ok {
 			defaultValue = currentSettingsValue.FieldByName(fieldName).Interface()
+		}
+		if key == "error_policy" {
+			defaultValue = "{\n  \"rules\": []\n}"
 		}
 
 		options = append(options, ConfigOption{

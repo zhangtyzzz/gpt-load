@@ -609,6 +609,22 @@ export default {
     current: "当前",
     clickToSwitch: "点击切换到{mode}",
   },
+  errorPolicy: {
+    defaultRule: "其他状态码",
+    addRule: "添加状态码规则",
+    statusPlaceholder: "状态码或范围，例如 429、500, 502、401-499",
+    cooldownSeconds: "无 Retry-After 时冷却秒数",
+    request: {
+      return: "直接返回错误",
+      retryOtherKey: "换 Key 重试",
+    },
+    health: {
+      noop: "不影响 Key",
+      failCountInc: "失败次数 +1",
+      cooldown: "临时冷却",
+      blacklistNow: "立即禁用",
+    },
+  },
   encryptionAlert: {
     title: "⚠️ 加密配置错误",
     viewSolution: "查看解决方案",

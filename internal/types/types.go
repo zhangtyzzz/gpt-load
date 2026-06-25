@@ -24,6 +24,7 @@ type SystemSettings struct {
 	RequestLogRetentionDays        int    `json:"request_log_retention_days" default:"7" name:"config.log_retention_days" category:"config.category.basic" desc:"config.log_retention_days_desc" validate:"required,min=0"`
 	RequestLogWriteIntervalMinutes int    `json:"request_log_write_interval_minutes" default:"1" name:"config.log_write_interval" category:"config.category.basic" desc:"config.log_write_interval_desc" validate:"required,min=0"`
 	EnableRequestBodyLogging       bool   `json:"enable_request_body_logging" default:"false" name:"config.enable_request_body_logging" category:"config.category.basic" desc:"config.enable_request_body_logging_desc"`
+	ErrorPolicy                    string `json:"error_policy" name:"config.error_policy" category:"config.category.basic" desc:"config.error_policy_desc" validate:"required"`
 
 	// 请求设置
 	RequestTimeout        int    `json:"request_timeout" default:"600" name:"config.request_timeout" category:"config.category.request" desc:"config.request_timeout_desc" validate:"required,min=1"`

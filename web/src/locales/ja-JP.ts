@@ -627,6 +627,22 @@ export default {
     current: "現在",
     clickToSwitch: "{mode}に切り替えるにはクリック",
   },
+  errorPolicy: {
+    defaultRule: "その他のステータスコード",
+    addRule: "ステータスルールを追加",
+    statusPlaceholder: "ステータスコードまたは範囲、例: 429、500, 502、401-499",
+    cooldownSeconds: "Retry-After なし時のクールダウン秒数",
+    request: {
+      return: "エラーを返す",
+      retryOtherKey: "別のキーで再試行",
+    },
+    health: {
+      noop: "キーに影響なし",
+      failCountInc: "失敗回数 +1",
+      cooldown: "一時クールダウン",
+      blacklistNow: "即時無効化",
+    },
+  },
   encryptionAlert: {
     title: "⚠️ 暗号化設定エラー",
     viewSolution: "解決策を表示",

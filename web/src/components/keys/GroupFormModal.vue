@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { keysApi } from "@/api/keys";
 import { settingsApi } from "@/api/settings";
+import ErrorPolicyEditor from "@/components/common/ErrorPolicyEditor.vue";
 import ProxyKeysInput from "@/components/common/ProxyKeysInput.vue";
 import type { AffinityRule, Group, GroupConfigOption, UpstreamInfo } from "@/types/models";
 import { Add, Close, HelpCircleOutline, Remove } from "@vicons/ionicons5";
@@ -128,6 +129,7 @@ const channelTypeOptions = ref<{ label: string; value: string }[]>([]);
 const configOptions = ref<GroupConfigOption[]>([]);
 const channelTypesFetched = ref(false);
 const configOptionsFetched = ref(false);
+const hiddenConfigKeys = new Set(["failover_status_codes"]);
 
 // 跟踪用户是否已手动修改过字段（仅在新增模式下使用）
 const userModifiedFields = ref({
@@ -341,12 +343,14 @@ function loadGroupData() {
     return;
   }
 
-  const configItems = Object.entries(props.group.config || {}).map(([key, value]) => {
-    return {
-      key,
-      value,
-    };
-  });
+  const configItems = Object.entries(props.group.config || {})
+    .filter(([key]) => !hiddenConfigKeys.has(key))
+    .map(([key, value]) => {
+      return {
+        key,
+        value,
+      };
+    });
   Object.assign(formData, {
     name: props.group.name || "",
     display_name: props.group.display_name || "",
@@ -508,7 +512,8 @@ function validateHeaderKeyUniqueness(
 function handleConfigKeyChange(index: number, key: string) {
   const option = configOptions.value.find(opt => opt.key === key);
   if (option) {
-    formData.configItems[index].value = option.default_value;
+    formData.configItems[index].value =
+      key === "error_policy" ? '{\n  "rules": []\n}' : option.default_value;
   }
 }
 
@@ -566,8 +571,16 @@ async function handleSubmit() {
       }
     }
 
-    // 将configItems转换为config对象
+    // 将configItems转换为config对象，保留不再展示的兼容配置，避免编辑分组时静默丢失。
     const config: Record<string, number | string | boolean> = {};
+    Object.entries(props.group?.config || {}).forEach(([key, value]) => {
+      if (
+        hiddenConfigKeys.has(key) &&
+        (typeof value === "number" || typeof value === "string" || typeof value === "boolean")
+      ) {
+        config[key] = value;
+      }
+    });
     formData.configItems.forEach((item: ConfigItem) => {
       if (item.key && item.key.trim()) {
         const option = configOptions.value.find(opt => opt.key === item.key);
@@ -965,7 +978,12 @@ async function handleSubmit() {
                         </n-tooltip>
                       </div>
                     </template>
-                    <div class="config-item-content">
+                    <div
+                      class="config-item-content"
+                      :class="{
+                        'config-item-content-policy': configItem.key === 'error_policy',
+                      }"
+                    >
                       <div class="config-select">
                         <n-select
                           v-model:value="configItem.key"
@@ -984,8 +1002,16 @@ async function handleSubmit() {
                           clearable
                         />
                       </div>
-                      <div class="config-value">
-                        <n-tooltip trigger="hover" placement="top">
+                      <div
+                        class="config-value"
+                        :class="{ 'config-value-policy': configItem.key === 'error_policy' }"
+                      >
+                        <error-policy-editor
+                          v-if="configItem.key === 'error_policy'"
+                          :model-value="String(configItem.value || '')"
+                          @update:model-value="value => (configItem.value = value)"
+                        />
+                        <n-tooltip v-else trigger="hover" placement="top">
                           <template #trigger>
                             <n-input-number
                               v-if="typeof configItem.value === 'number'"
@@ -1181,7 +1207,9 @@ async function handleSubmit() {
                     class="affinity-rule-card"
                   >
                     <div class="affinity-rule-header">
-                      <span class="affinity-rule-title">{{ t("keys.addAffinityRule") }} {{ index + 1 }}</span>
+                      <span class="affinity-rule-title">
+                        {{ t("keys.addAffinityRule") }} {{ index + 1 }}
+                      </span>
                       <n-button
                         @click="removeAffinityRule(index)"
                         type="error"
@@ -1628,14 +1656,41 @@ async function handleSubmit() {
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-width: 0;
 }
 
 .config-select {
   flex: 0 0 200px;
+  min-width: 0;
 }
 
 .config-value {
   flex: 1;
+  min-width: 0;
+}
+
+.config-item-content-policy {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr) 32px;
+  align-items: start;
+}
+
+.config-item-content-policy .config-select {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+}
+
+.config-item-content-policy .config-value-policy {
+  grid-column: 1 / -2;
+  grid-row: 2;
+  width: 100%;
+}
+
+.config-item-content-policy .config-actions {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
 }
 
 .config-actions {
@@ -1681,6 +1736,10 @@ async function handleSubmit() {
 
   .config-value {
     flex: 1;
+  }
+
+  .config-item-content-policy {
+    display: flex;
   }
 
   .upstream-actions,

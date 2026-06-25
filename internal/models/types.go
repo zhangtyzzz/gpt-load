@@ -1,7 +1,7 @@
 package models
 
 import (
-	"gpt-load/internal/failover"
+	"gpt-load/internal/errorpolicy"
 	"gpt-load/internal/types"
 	"time"
 
@@ -36,6 +36,7 @@ type GroupConfig struct {
 	MaxRetries                   *int    `json:"max_retries,omitempty"`
 	BlacklistThreshold           *int    `json:"blacklist_threshold,omitempty"`
 	FailoverStatusCodes          *string `json:"failover_status_codes,omitempty"`
+	ErrorPolicy                  *string `json:"error_policy,omitempty"`
 	KeyValidationIntervalMinutes *int    `json:"key_validation_interval_minutes,omitempty"`
 	KeyValidationConcurrency     *int    `json:"key_validation_concurrency,omitempty"`
 	KeyValidationTimeoutSeconds  *int    `json:"key_validation_timeout_seconds,omitempty"`
@@ -66,9 +67,9 @@ type AffinityMatchRule struct {
 
 // AffinityRule defines a key affinity rule for a group.
 type AffinityRule struct {
-	Name      string            `json:"name"`                 // Rule name for identification
-	Match     AffinityMatchRule `json:"match"`                // Match conditions
-	KeySource AffinityKeySource `json:"key_source"`           // How to extract affinity value
+	Name      string            `json:"name"`                  // Rule name for identification
+	Match     AffinityMatchRule `json:"match"`                 // Match conditions
+	KeySource AffinityKeySource `json:"key_source"`            // How to extract affinity value
 	TTL       int               `json:"ttl_seconds,omitempty"` // TTL override for this rule (seconds)
 }
 
@@ -130,11 +131,11 @@ type Group struct {
 	UpdatedAt           time.Time            `json:"updated_at"`
 
 	// For cache
-	ProxyKeysMap              map[string]struct{}        `gorm:"-" json:"-"`
-	HeaderRuleList            []HeaderRule               `gorm:"-" json:"-"`
-	AffinityRuleList          []AffinityRule             `gorm:"-" json:"-"`
-	ModelRedirectMap          map[string]string          `gorm:"-" json:"-"`
-	FailoverStatusCodeMatcher failover.StatusCodeMatcher `gorm:"-" json:"-"`
+	ProxyKeysMap     map[string]struct{} `gorm:"-" json:"-"`
+	HeaderRuleList   []HeaderRule        `gorm:"-" json:"-"`
+	AffinityRuleList []AffinityRule      `gorm:"-" json:"-"`
+	ModelRedirectMap map[string]string   `gorm:"-" json:"-"`
+	ErrorPolicy      errorpolicy.Policy  `gorm:"-" json:"-"`
 }
 
 // APIKey 对应 api_keys 表
