@@ -37,9 +37,6 @@ type Store interface {
 	// Exists checks if a key exists in the store.
 	Exists(key string) (bool, error)
 
-	// SetNX sets a key-value pair if the key does not already exist.
-	SetNX(key string, value []byte, ttl time.Duration) (bool, error)
-
 	// HASH operations
 	HSet(key string, values map[string]any) error
 	HGetAll(key string) (map[string]string, error)

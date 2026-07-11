@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -62,6 +63,7 @@ var (
 	credentialAssignmentPattern = regexp.MustCompile(`(?i)((?:"?(?:` + credentialNamePattern + `)"?)\s*[:=]\s*"?)[^\s,"'&}\])<>\[]+`)
 	bearerTokenPattern          = regexp.MustCompile(`(?i)(\bBearer\s+)[^\s,"'&}\])<>\[]+`)
 	urlUserInfoPattern          = regexp.MustCompile(`(://)[^/@\s?#]+@`)
+	jsonUnicodeEscapePattern    = regexp.MustCompile(`(?i)\\u[0-9a-f]{4}`)
 )
 
 // IsSensitiveName reports whether a configuration or query parameter name is
@@ -111,6 +113,22 @@ func SanitizeURLForLogging(requestURL *url.URL) string {
 	return safeURL.String()
 }
 
+// SanitizeURLStringForLogging removes credentials from a serialized URL before
+// it is persisted or displayed. Structured parsing handles userinfo and every
+// sensitive query value. Malformed input is replaced wholesale because a
+// broken escape can hide a credential-shaped parameter name from text-based
+// matching.
+func SanitizeURLStringForLogging(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return RedactedValue
+	}
+	return SanitizeText(SanitizeURLForLogging(parsed))
+}
+
 // SanitizeText removes credentials from URL fragments, structured fields and
 // Authorization bearer values embedded in diagnostic or upstream error text.
 // It is intentionally conservative: losing a small piece of diagnostic detail
@@ -157,8 +175,73 @@ func SanitizeKnownSecrets(value string, secrets ...string) string {
 			seen[candidate] = struct{}{}
 			value = strings.ReplaceAll(value, candidate, RedactedValue)
 		}
+		if containsEncodedSecret(value, secret) {
+			return RedactedValue
+		}
 	}
 	return SanitizeText(value)
+}
+
+// containsEncodedSecret detects reversible transport encodings that may use
+// non-canonical hex case or combine URL and JSON escaping. When such a form is
+// found the caller redacts the complete diagnostic value rather than trying to
+// reconstruct byte offsets in hostile upstream text.
+func containsEncodedSecret(value, secret string) bool {
+	if value == "" || secret == "" {
+		return false
+	}
+
+	seen := map[string]struct{}{value: {}}
+	frontier := []string{value}
+	for range 2 {
+		next := make([]string, 0, len(frontier)*3)
+		for _, candidate := range frontier {
+			decodedValues := make([]string, 0, 3)
+			if decoded, err := url.QueryUnescape(candidate); err == nil {
+				decodedValues = append(decodedValues, decoded)
+			}
+			if decoded, err := url.PathUnescape(candidate); err == nil {
+				decodedValues = append(decodedValues, decoded)
+			}
+			decodedValues = append(decodedValues, decodeJSONEscapes(candidate))
+
+			for _, decoded := range decodedValues {
+				if strings.Contains(decoded, secret) {
+					return true
+				}
+				if decoded == candidate {
+					continue
+				}
+				if _, exists := seen[decoded]; exists {
+					continue
+				}
+				seen[decoded] = struct{}{}
+				next = append(next, decoded)
+			}
+		}
+		frontier = next
+	}
+	return false
+}
+
+func decodeJSONEscapes(value string) string {
+	decoded := jsonUnicodeEscapePattern.ReplaceAllStringFunc(value, func(encoded string) string {
+		codePoint, err := strconv.ParseUint(encoded[2:], 16, 16)
+		if err != nil {
+			return encoded
+		}
+		return string(rune(codePoint))
+	})
+	return strings.NewReplacer(
+		`\/`, `/`,
+		`\"`, `"`,
+		`\\`, `\`,
+		`\b`, "\b",
+		`\f`, "\f",
+		`\n`, "\n",
+		`\r`, "\r",
+		`\t`, "\t",
+	).Replace(decoded)
 }
 
 // sanitizeJSONCredentials handles complete JSON payloads structurally so

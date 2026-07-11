@@ -117,35 +117,6 @@ func (s *MemoryStore) Exists(key string) (bool, error) {
 	return true, nil
 }
 
-// SetNX sets a key-value pair if the key does not already exist.
-func (s *MemoryStore) SetNX(key string, value []byte, ttl time.Duration) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rawItem, exists := s.data[key]
-	if exists {
-		if item, ok := rawItem.(memoryStoreItem); ok {
-			if item.expiresAt == 0 || time.Now().UnixNano() < item.expiresAt {
-				return false, nil
-			}
-		} else {
-			// Key exists but is not a simple K/V item, treat as existing
-			return false, nil
-		}
-	}
-
-	// Key does not exist or is expired, so we can set it.
-	var expiresAt int64
-	if ttl > 0 {
-		expiresAt = time.Now().UnixNano() + ttl.Nanoseconds()
-	}
-	s.data[key] = memoryStoreItem{
-		value:     value,
-		expiresAt: expiresAt,
-	}
-	return true, nil
-}
-
 // --- HASH operations ---
 
 func (s *MemoryStore) HSet(key string, values map[string]any) error {

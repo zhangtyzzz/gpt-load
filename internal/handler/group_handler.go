@@ -61,6 +61,7 @@ type GroupCreateRequest struct {
 	ModelRedirectRules  map[string]string     `json:"model_redirect_rules"`
 	ModelRedirectStrict bool                  `json:"model_redirect_strict"`
 	Config              map[string]any        `json:"config"`
+	ChannelConfig       json.RawMessage       `json:"channel_config"`
 	HeaderRules         []models.HeaderRule   `json:"header_rules"`
 	AffinityRules       []models.AffinityRule `json:"affinity_rules"`
 	ProxyKeys           string                `json:"proxy_keys"`
@@ -88,6 +89,7 @@ func (s *Server) CreateGroup(c *gin.Context) {
 		ModelRedirectRules:  req.ModelRedirectRules,
 		ModelRedirectStrict: req.ModelRedirectStrict,
 		Config:              req.Config,
+		ChannelConfig:       req.ChannelConfig,
 		HeaderRules:         req.HeaderRules,
 		AffinityRules:       req.AffinityRules,
 		ProxyKeys:           req.ProxyKeys,
@@ -132,6 +134,7 @@ type GroupUpdateRequest struct {
 	ModelRedirectRules  map[string]string     `json:"model_redirect_rules"`
 	ModelRedirectStrict *bool                 `json:"model_redirect_strict"`
 	Config              map[string]any        `json:"config"`
+	ChannelConfig       json.RawMessage       `json:"channel_config"`
 	HeaderRules         []models.HeaderRule   `json:"header_rules"`
 	AffinityRules       []models.AffinityRule `json:"affinity_rules"`
 	ProxyKeys           *string               `json:"proxy_keys,omitempty"`
@@ -195,6 +198,10 @@ func (s *Server) UpdateGroup(c *gin.Context) {
 		ModelRedirectStrict: req.ModelRedirectStrict,
 		Config:              req.Config,
 		ProxyKeys:           req.ProxyKeys,
+	}
+	if req.ChannelConfig != nil {
+		params.ChannelConfig = req.ChannelConfig
+		params.HasChannelConfig = true
 	}
 
 	if req.Upstreams != nil {
@@ -269,6 +276,7 @@ type GroupResponse struct {
 	ModelRedirectRules  datatypes.JSONMap     `json:"model_redirect_rules"`
 	ModelRedirectStrict bool                  `json:"model_redirect_strict"`
 	Config              datatypes.JSONMap     `json:"config"`
+	ChannelConfig       datatypes.JSON        `json:"channel_config"`
 	HeaderRules         []models.HeaderRule   `json:"header_rules"`
 	AffinityRules       []models.AffinityRule `json:"affinity_rules"`
 	ProxyKeys           string                `json:"proxy_keys"`
@@ -287,6 +295,10 @@ func (s *Server) newGroupResponse(group *models.Group) *GroupResponse {
 			u.Path = strings.TrimRight(u.Path, "/") + "/proxy/" + group.Name
 			endpoint = u.String()
 		}
+	}
+	channelConfig := group.ChannelConfig
+	if value := strings.TrimSpace(string(channelConfig)); value == "" || value == "null" {
+		channelConfig = datatypes.JSON("{}")
 	}
 
 	// Parse header rules from JSON
@@ -323,6 +335,7 @@ func (s *Server) newGroupResponse(group *models.Group) *GroupResponse {
 		ModelRedirectRules:  group.ModelRedirectRules,
 		ModelRedirectStrict: group.ModelRedirectStrict,
 		Config:              group.Config,
+		ChannelConfig:       channelConfig,
 		HeaderRules:         headerRules,
 		AffinityRules:       affinityRules,
 		ProxyKeys:           group.ProxyKeys,

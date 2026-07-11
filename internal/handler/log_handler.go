@@ -59,7 +59,7 @@ func newLogResponse(logEntry models.RequestLog) LogResponse {
 		ErrorMessage:    utils.SanitizeText(logEntry.ErrorMessage),
 		UserAgent:       logEntry.UserAgent,
 		RequestType:     logEntry.RequestType,
-		UpstreamAddr:    utils.SanitizeText(logEntry.UpstreamAddr),
+		UpstreamAddr:    utils.SanitizeURLStringForLogging(logEntry.UpstreamAddr),
 		IsStream:        logEntry.IsStream,
 		RequestBody:     utils.SanitizeText(logEntry.RequestBody),
 	}

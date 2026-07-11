@@ -579,7 +579,7 @@ func sanitizeRequestLog(log *models.RequestLog) {
 	// from the one-way hash, never a supplied credential.
 	log.KeyValue = utils.KeyFingerprint(log.KeyHash)
 	log.RequestPath = utils.SanitizeText(log.RequestPath)
-	log.UpstreamAddr = utils.SanitizeText(log.UpstreamAddr)
+	log.UpstreamAddr = utils.SanitizeURLStringForLogging(log.UpstreamAddr)
 	log.ErrorMessage = utils.SanitizeText(log.ErrorMessage)
 	log.RequestBody = utils.SanitizeText(log.RequestBody)
 }

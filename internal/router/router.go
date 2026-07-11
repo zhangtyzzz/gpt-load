@@ -106,6 +106,7 @@ func registerPublicAPIRoutes(api *gin.RouterGroup, serverHandler *handler.Server
 // registerProtectedAPIRoutes 认证API路由
 func registerProtectedAPIRoutes(api *gin.RouterGroup, serverHandler *handler.Server) {
 	api.GET("/channel-types", serverHandler.CommonHandler.GetChannelTypes)
+	api.GET("/channel-catalog", serverHandler.CommonHandler.GetChannelCatalog)
 
 	groups := api.Group("/groups")
 	{
@@ -183,7 +184,7 @@ func registerProxyRoutes(
 ) {
 	proxyGroup := router.Group("/proxy/:group_name")
 
-	proxyGroup.Use(middleware.ProxyRouteDispatcher(serverHandler))
+	proxyGroup.Use(middleware.ProxyRouteDispatcher(serverHandler, groupManager))
 	proxyGroup.Use(middleware.ProxyAuth(groupManager))
 
 	proxyGroup.Any("/*path", proxyServer.HandleProxy)

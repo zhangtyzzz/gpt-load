@@ -55,6 +55,7 @@ var MessagesJaJP = map[string]string{
 	"validation.test_model_required":                         "テストモデルが必要です",
 	"validation.invalid_copy_keys_value":                     "無効なcopy_keys値。'none'、'valid_only'、'all'のいずれかである必要があります",
 	"validation.invalid_channel_type":                        "無効なチャンネルタイプ。サポートされるタイプ: {{.types}}",
+	"validation.invalid_channel_config":                      "無効なチャンネル設定: {{.error}}",
 	"validation.test_model_empty":                            "テストモデルは空またはスペースのみにできません",
 	"validation.invalid_status_value":                        "無効なステータス値",
 	"validation.invalid_upstreams":                           "無効なupstreams設定: {{.error}}",

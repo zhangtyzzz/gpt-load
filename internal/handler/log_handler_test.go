@@ -39,7 +39,15 @@ func TestGetLogsReturnsFingerprintForHistoricalCredential(t *testing.T) {
 	const requestPathSecret = "sk-historical-path-secret"
 	const errorSecret = "sk-historical-error-secret"
 	const requestBodySecret = "sk-historical-body-secret"
-	const upstreamSecret = "sk-historical-upstream-secret"
+	upstreamSecrets := []string{
+		"historical-upstream-user-secret",
+		"historical-upstream-password-secret",
+		"historical-upstream-key-secret",
+		"historical-upstream-api-key-secret",
+		"historical-upstream-token-secret",
+		"historical-upstream-access-token-secret",
+		"historical-upstream-authorization-secret",
+	}
 	const keyHash = "fedcba9876543210fedcba9876543210"
 	if err := database.Create(&models.RequestLog{
 		ID:           "api-log",
@@ -48,7 +56,13 @@ func TestGetLogsReturnsFingerprintForHistoricalCredential(t *testing.T) {
 		RequestPath:  "/proxy/demo?model=gpt-4&api_key=" + requestPathSecret,
 		ErrorMessage: "upstream rejected token=" + errorSecret,
 		RequestBody:  `{"model":"gpt-4","client_secret":"` + requestBodySecret + `"}`,
-		UpstreamAddr: "https://operator:" + upstreamSecret + "@upstream.example/v1",
+		UpstreamAddr: "https://" + upstreamSecrets[0] + ":" + upstreamSecrets[1] + "@upstream.example/v1" +
+			"?key=" + upstreamSecrets[2] +
+			"&api_key=" + upstreamSecrets[3] +
+			"&token=" + upstreamSecrets[4] +
+			"&access_token=" + upstreamSecrets[5] +
+			"&authorization=" + upstreamSecrets[6] +
+			"&region=us-east-1",
 	}).Error; err != nil {
 		t.Fatalf("insert request log: %v", err)
 	}
@@ -66,16 +80,20 @@ func TestGetLogsReturnsFingerprintForHistoricalCredential(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	for _, historicalSecret := range []string{
+	historicalSecrets := []string{
 		secret,
 		requestPathSecret,
 		errorSecret,
 		requestBodySecret,
-		upstreamSecret,
-	} {
+	}
+	historicalSecrets = append(historicalSecrets, upstreamSecrets...)
+	for _, historicalSecret := range historicalSecrets {
 		if strings.Contains(recorder.Body.String(), historicalSecret) {
 			t.Fatalf("log API leaked historical credential %q: %s", historicalSecret, recorder.Body.String())
 		}
+	}
+	if !strings.Contains(recorder.Body.String(), "region=us-east-1") {
+		t.Fatalf("log API removed non-sensitive upstream query context: %s", recorder.Body.String())
 	}
 	if strings.Contains(recorder.Body.String(), `"key_hash"`) || strings.Contains(recorder.Body.String(), keyHash) {
 		t.Fatalf("log API leaked internal key hash: %s", recorder.Body.String())

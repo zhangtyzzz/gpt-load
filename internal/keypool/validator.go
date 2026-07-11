@@ -2,6 +2,7 @@ package keypool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"gpt-load/internal/channel"
 	"gpt-load/internal/config"
@@ -64,6 +65,14 @@ func (s *KeyValidator) ValidateSingleKey(key *models.APIKey, group *models.Group
 	}
 
 	isValid, validationErr := ch.ValidateKey(ctx, key, group)
+	if errors.Is(validationErr, channel.ErrValidationInconclusive) {
+		logrus.WithFields(logrus.Fields{
+			"error":    validationErr,
+			"key_id":   key.ID,
+			"group_id": group.ID,
+		}).Debug("Key validation was inconclusive; preserving current status")
+		return false, validationErr
+	}
 
 	var errorMsg string
 	if !isValid && validationErr != nil {

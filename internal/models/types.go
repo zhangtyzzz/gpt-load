@@ -120,6 +120,7 @@ type Group struct {
 	TestModel           string               `gorm:"type:varchar(255);not null" json:"test_model"`
 	ParamOverrides      datatypes.JSONMap    `gorm:"type:json" json:"param_overrides"`
 	Config              datatypes.JSONMap    `gorm:"type:json" json:"config"`
+	ChannelConfig       datatypes.JSON       `gorm:"type:json" json:"channel_config"`
 	HeaderRules         datatypes.JSON       `gorm:"type:json" json:"header_rules"`
 	AffinityRules       datatypes.JSON       `gorm:"type:json" json:"affinity_rules"`
 	ModelRedirectRules  datatypes.JSONMap    `gorm:"type:json" json:"model_redirect_rules"`

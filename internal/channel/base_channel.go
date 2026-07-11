@@ -81,17 +81,81 @@ func (b *BaseChannel) BuildUpstreamURL(originalURL *url.URL, groupName string) (
 	if base == nil {
 		return "", fmt.Errorf("no upstream URL configured for channel %s", b.Name)
 	}
+	return buildUpstreamURLFromBase(base, originalURL, groupName), nil
+}
 
+func buildUpstreamURLFromBase(base, originalURL *url.URL, groupName string) string {
 	finalURL := *base
 	proxyPrefix := "/proxy/" + groupName
 	requestPath := originalURL.Path
 	requestPath = strings.TrimPrefix(requestPath, proxyPrefix)
+	requestEscapedPath := originalURL.EscapedPath()
+	if escapedSuffix, ok := trimEscapedPathPrefix(requestEscapedPath, proxyPrefix); ok {
+		requestEscapedPath = escapedSuffix
+	} else {
+		// A non-canonical escape in the route prefix cannot safely be sliced by
+		// byte offset. Re-escape only the already stripped decoded suffix; the
+		// request payload path remains semantically identical.
+		requestEscapedPath = (&url.URL{Path: requestPath}).EscapedPath()
+	}
 
-	finalURL.Path = strings.TrimRight(finalURL.Path, "/") + requestPath
+	baseEscapedPath := strings.TrimRight(finalURL.EscapedPath(), "/")
+	joinedEscapedPath := baseEscapedPath + requestEscapedPath
+	if decoded, err := url.PathUnescape(joinedEscapedPath); err == nil {
+		finalURL.Path = decoded
+		finalURL.RawPath = joinedEscapedPath
+	} else {
+		finalURL.Path = strings.TrimRight(finalURL.Path, "/") + requestPath
+		finalURL.RawPath = ""
+	}
 
 	finalURL.RawQuery = originalURL.RawQuery
 
-	return finalURL.String(), nil
+	return finalURL.String()
+}
+
+// trimEscapedPathPrefix removes a decoded path prefix while retaining the
+// exact escaping of the remaining suffix. It handles a percent-encoded route
+// prefix without normalizing later escaped slashes or percent signs.
+func trimEscapedPathPrefix(escapedPath, decodedPrefix string) (string, bool) {
+	rawIndex := 0
+	for decodedIndex := 0; decodedIndex < len(decodedPrefix); decodedIndex++ {
+		if rawIndex >= len(escapedPath) {
+			return "", false
+		}
+		value := escapedPath[rawIndex]
+		if value == '%' {
+			if rawIndex+2 >= len(escapedPath) {
+				return "", false
+			}
+			hi, hiOK := fromHex(escapedPath[rawIndex+1])
+			lo, loOK := fromHex(escapedPath[rawIndex+2])
+			if !hiOK || !loOK {
+				return "", false
+			}
+			value = hi<<4 | lo
+			rawIndex += 3
+		} else {
+			rawIndex++
+		}
+		if value != decodedPrefix[decodedIndex] {
+			return "", false
+		}
+	}
+	return escapedPath[rawIndex:], true
+}
+
+func fromHex(value byte) (byte, bool) {
+	switch {
+	case value >= '0' && value <= '9':
+		return value - '0', true
+	case value >= 'a' && value <= 'f':
+		return value - 'a' + 10, true
+	case value >= 'A' && value <= 'F':
+		return value - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 // IsConfigStale checks if the channel's configuration is stale compared to the provided group.
