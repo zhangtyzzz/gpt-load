@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { keysApi } from "@/api/keys";
 import ProxyKeysInput from "@/components/common/ProxyKeysInput.vue";
-import { type ChannelType, type Group } from "@/types/models";
+import { useChannelCatalog } from "@/composables/useChannelCatalog";
+import { type Group } from "@/types/models";
 import { Close } from "@vicons/ionicons5";
+import { useMediaQuery } from "@vueuse/core";
 import {
+  NAlert,
   NButton,
   NCard,
   NForm,
@@ -13,11 +16,13 @@ import {
   NInputNumber,
   NModal,
   NSelect,
+  useDialog,
   useMessage,
   type FormRules,
 } from "naive-ui";
-import { reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { onBeforeRouteLeave } from "vue-router";
 
 interface Props {
   show: boolean;
@@ -37,29 +42,108 @@ const emit = defineEmits<Emits>();
 
 const { t } = useI18n();
 const message = useMessage();
+const dialog = useDialog();
 const loading = ref(false);
+const initializing = ref(false);
 const formRef = ref();
-
-// 渠道类型选项
-const channelTypeOptions = [
-  { label: "OpenAI", value: "openai" as ChannelType },
-  { label: "OpenAI Response", value: "openai-response" as ChannelType },
-  { label: "Gemini", value: "gemini" as ChannelType },
-  { label: "Anthropic", value: "anthropic" as ChannelType },
-];
+const savedSnapshot = ref("");
+const formInitialized = ref(false);
+const isMobile = useMediaQuery("(max-width: 768px)");
+const { catalog, channelTypes, loadCatalog } = useChannelCatalog();
+const aggregateChannelTypes = computed(() =>
+  channelTypes.value.filter(channel => channel.capabilities.aggregate)
+);
+const channelTypeOptions = computed(() => {
+  const options = aggregateChannelTypes.value.map(channel => ({
+    label: channel.display_name,
+    value: channel.id,
+    disabled: false,
+  }));
+  if (
+    props.group?.channel_type &&
+    !options.some(item => item.value === props.group?.channel_type)
+  ) {
+    options.push({
+      label: `${props.group.channel_type} (${t("channels.unavailable")})`,
+      value: props.group.channel_type,
+      disabled: true,
+    });
+  }
+  return options;
+});
 
 // 默认表单数据
-const defaultFormData = {
-  name: "",
-  display_name: "",
-  description: "",
-  channel_type: "openai" as ChannelType,
-  sort: 1,
-  proxy_keys: "",
-};
+function createDefaultFormData() {
+  const defaultChannel = aggregateChannelTypes.value.find(
+    channel => channel.id === catalog.value.default_channel_type
+  );
+  return {
+    name: "",
+    display_name: "",
+    description: "",
+    channel_type: defaultChannel?.id || aggregateChannelTypes.value[0]?.id || "openai",
+    sort: 1,
+    proxy_keys: "",
+  };
+}
 
 // 表单数据
-const formData = reactive({ ...defaultFormData });
+const formData = reactive(createDefaultFormData());
+const serializeForm = () => JSON.stringify(formData);
+const isDirty = computed(
+  () =>
+    props.show &&
+    formInitialized.value &&
+    Boolean(savedSnapshot.value) &&
+    serializeForm() !== savedSnapshot.value
+);
+
+let initializationRun = 0;
+let beforeUnloadRegistered = false;
+let discardConfirmation: Promise<boolean> | null = null;
+
+function addBeforeUnloadListener() {
+  if (!beforeUnloadRegistered) {
+    globalThis.addEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = true;
+  }
+}
+
+function removeBeforeUnloadListener() {
+  if (beforeUnloadRegistered) {
+    globalThis.removeEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = false;
+  }
+}
+
+function clearDirtyTracking() {
+  formInitialized.value = false;
+  savedSnapshot.value = "";
+  removeBeforeUnloadListener();
+}
+
+function captureSavedSnapshot() {
+  savedSnapshot.value = serializeForm();
+  formInitialized.value = true;
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!isDirty.value) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = t("keys.groupFormLeaveWarning");
+}
+
+watch(isDirty, dirty => {
+  if (dirty) {
+    addBeforeUnloadListener();
+  } else {
+    removeBeforeUnloadListener();
+  }
+});
+
+onBeforeUnmount(removeBeforeUnloadListener);
 
 // 表单验证规则
 const rules: FormRules = {
@@ -87,21 +171,47 @@ const rules: FormRules = {
 // 监听弹窗显示状态
 watch(
   () => props.show,
-  show => {
-    if (show) {
+  async show => {
+    const run = ++initializationRun;
+    if (!show) {
+      initializing.value = false;
+      clearDirtyTracking();
+      return;
+    }
+
+    initializing.value = true;
+    clearDirtyTracking();
+    try {
+      try {
+        await loadCatalog();
+      } catch {
+        message.warning(t("channels.catalogLoadFailed"));
+      }
+      if (run !== initializationRun || !props.show) {
+        return;
+      }
       // 新建模式重置表单，编辑模式加载数据
       if (props.group) {
         loadGroupData();
       } else {
         resetForm();
       }
+      await nextTick();
+      if (run === initializationRun && props.show) {
+        captureSavedSnapshot();
+      }
+    } finally {
+      if (run === initializationRun) {
+        initializing.value = false;
+      }
     }
-  }
+  },
+  { immediate: true }
 );
 
 // 重置表单
 function resetForm() {
-  Object.assign(formData, defaultFormData);
+  Object.assign(formData, createDefaultFormData());
 }
 
 // 加载分组数据（编辑模式）
@@ -120,19 +230,74 @@ function loadGroupData() {
   });
 }
 
-// 关闭弹窗
-function handleClose() {
+function closeWithoutPrompt() {
+  clearDirtyTracking();
   emit("update:show", false);
 }
 
+function confirmDiscard(): Promise<boolean> {
+  if (!isDirty.value) {
+    return Promise.resolve(true);
+  }
+  if (discardConfirmation) {
+    return discardConfirmation;
+  }
+
+  discardConfirmation = new Promise(resolve => {
+    let settled = false;
+    const finish = (discard: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      discardConfirmation = null;
+      resolve(discard);
+    };
+    dialog.warning({
+      title: t("keys.discardGroupChangesTitle"),
+      content: t("keys.discardGroupChangesDescription"),
+      positiveText: t("keys.discardGroupChanges"),
+      negativeText: t("keys.continueEditingGroup"),
+      positiveButtonProps: { type: "warning" },
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+      onMaskClick: () => finish(false),
+    });
+  });
+  return discardConfirmation;
+}
+
+async function requestClose() {
+  if (await confirmDiscard()) {
+    closeWithoutPrompt();
+  }
+}
+
+function handleModalShowChange(show: boolean) {
+  if (!show) {
+    void requestClose();
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  if (!(await confirmDiscard())) {
+    return false;
+  }
+  clearDirtyTracking();
+  return true;
+});
+
 // 提交表单
 async function handleSubmit() {
-  if (loading.value) {
+  if (loading.value || initializing.value) {
     return;
   }
 
   try {
-    await formRef.value?.validate();
+    if (typeof formRef.value?.validate === "function") {
+      await formRef.value.validate();
+    }
 
     loading.value = true;
 
@@ -160,16 +325,19 @@ async function handleSubmit() {
       result = await keysApi.createGroup(submitData);
     }
 
+    clearDirtyTracking();
     emit("success", result);
-    handleClose();
+    closeWithoutPrompt();
   } finally {
     loading.value = false;
   }
 }
+
+defineExpose({ formData, handleSubmit, initializing, isDirty, requestClose });
 </script>
 
 <template>
-  <n-modal :show="show" @update:show="handleClose" class="aggregate-group-modal">
+  <n-modal :show="show" @update:show="handleModalShowChange" class="aggregate-group-modal">
     <n-card
       class="aggregate-group-card"
       :title="group ? t('keys.editAggregateGroup') : t('keys.createAggregateGroup')"
@@ -177,9 +345,10 @@ async function handleSubmit() {
       size="huge"
       role="dialog"
       aria-modal="true"
+      :aria-busy="initializing"
     >
       <template #header-extra>
-        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="requestClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -190,8 +359,9 @@ async function handleSubmit() {
         ref="formRef"
         :model="formData"
         :rules="rules"
-        label-placement="left"
-        label-width="120px"
+        :label-placement="isMobile ? 'top' : 'left'"
+        :label-width="isMobile ? 'auto' : '120px'"
+        :disabled="initializing"
       >
         <!-- 基础信息 -->
         <div class="form-section">
@@ -222,6 +392,14 @@ async function handleSubmit() {
             />
           </n-form-item>
 
+          <n-alert
+            v-if="formData.channel_type === 'generic-http'"
+            type="info"
+            class="compatibility-alert"
+          >
+            {{ t("channels.aggregate.parentDerived") }}
+          </n-alert>
+
           <n-form-item :label="t('keys.sortOrder')">
             <n-input-number
               v-model:value="formData.sort"
@@ -249,8 +427,13 @@ async function handleSubmit() {
 
       <template #footer>
         <div class="modal-footer">
-          <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
-          <n-button type="primary" @click="handleSubmit" :loading="loading">
+          <n-button @click="requestClose">{{ t("common.cancel") }}</n-button>
+          <n-button
+            type="primary"
+            @click="handleSubmit"
+            :loading="loading || initializing"
+            :disabled="initializing"
+          >
             {{ group ? t("common.update") : t("common.create") }}
           </n-button>
         </div>
@@ -301,6 +484,10 @@ async function handleSubmit() {
   gap: var(--space-3);
 }
 
+.compatibility-alert {
+  margin-bottom: var(--space-4);
+}
+
 @media (max-width: 768px) {
   .aggregate-group-card {
     width: min(600px, calc(100vw - 2rem));
@@ -311,6 +498,7 @@ async function handleSubmit() {
   .aggregate-group-card :deep(.n-card__content),
   .aggregate-group-card :deep(.n-card__footer) {
     padding-inline: var(--space-3);
+    padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   }
 
   .modal-footer {

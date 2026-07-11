@@ -162,6 +162,15 @@ a {
   transform: translateY(-1px);
 }
 
+/*
+ * Global feedback is teleported to <body> by Naive UI. Keep its edge offsets
+ * safe-area aware without changing the established desktop top-right placement.
+ */
+body .global-message-container.n-message-container--top-right {
+  top: max(var(--space-3), env(safe-area-inset-top, 0px));
+  right: max(var(--space-3), env(safe-area-inset-right, 0px));
+}
+
 .modern-button {
   border-radius: var(--border-radius-md);
   font-weight: 600;
@@ -288,6 +297,24 @@ a {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+@media (max-width: 768px) {
+  /*
+   * Mobile modal headers expose controls across the first 4rem. Messages begin
+   * below that interaction zone and stay inside both horizontal safe areas.
+   */
+  body .global-message-container.n-message-container--top-right {
+    top: calc(max(var(--space-3), env(safe-area-inset-top, 0px)) + 4rem);
+    right: max(var(--space-3), env(safe-area-inset-right, 0px));
+    left: max(var(--space-3), env(safe-area-inset-left, 0px));
+    align-items: center;
+  }
+
+  .global-message-container .n-message-wrapper,
+  .global-message-container .n-message {
+    max-width: 100%;
+  }
 }
 
 @media (max-width: 640px) {

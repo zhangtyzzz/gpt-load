@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { keysApi } from "@/api/keys";
-import { settingsApi } from "@/api/settings";
+import { normalizeGenericHttpConfig, useChannelCatalog } from "@/composables/useChannelCatalog";
 import ErrorPolicyEditor from "@/components/common/ErrorPolicyEditor.vue";
 import ProxyKeysInput from "@/components/common/ProxyKeysInput.vue";
+import GenericHttpChannelFields from "@/components/keys/GenericHttpChannelFields.vue";
+import type { ChannelConfig, ChannelDescriptor } from "@/types/channels";
 import type { AffinityRule, Group, GroupConfigOption, UpstreamInfo } from "@/types/models";
+import {
+  areValidHttpUpstreams,
+  isHttpHeaderToken,
+  isReservedProxyHeaderName,
+  isValidHttpUpstreamUrl,
+  sanitizeChannelSpecificFields,
+} from "@/utils/channel-form";
 import { Add, Close, HelpCircleOutline, Remove } from "@vicons/ionicons5";
+import { useMediaQuery } from "@vueuse/core";
 import {
   NButton,
   NCard,
@@ -19,11 +29,13 @@ import {
   NSelect,
   NSwitch,
   NTooltip,
+  useDialog,
   useMessage,
   type FormRules,
 } from "naive-ui";
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { onBeforeRouteLeave } from "vue-router";
 
 interface Props {
   show: boolean;
@@ -73,8 +85,15 @@ const emit = defineEmits<Emits>();
 
 const { t } = useI18n();
 const message = useMessage();
+const dialog = useDialog();
 const loading = ref(false);
+const initializing = ref(false);
 const formRef = ref();
+const genericHttpConfigValid = ref(true);
+const savedSnapshot = ref("");
+const formInitialized = ref(false);
+const isMobile = useMediaQuery("(max-width: 768px)");
+const { catalog, channelTypes, loadCatalog } = useChannelCatalog();
 const modelRedirectTip = `{
   "gpt-5": "gpt-5-2025-08-07",
   "gemini-2.5-flash": "gemini-2.5-flash-preview-09-2025"
@@ -86,7 +105,8 @@ interface GroupFormData {
   display_name: string;
   description: string;
   upstreams: UpstreamInfo[];
-  channel_type: "anthropic" | "gemini" | "openai" | "openai-response";
+  channel_type: string;
+  channel_config?: ChannelConfig;
   sort: number;
   test_model: string;
   validation_endpoint: string;
@@ -113,6 +133,7 @@ const formData = reactive<GroupFormData>({
     },
   ] as UpstreamInfo[],
   channel_type: "openai",
+  channel_config: undefined,
   sort: 1,
   test_model: "",
   validation_endpoint: "",
@@ -127,61 +148,115 @@ const formData = reactive<GroupFormData>({
   group_type: "standard",
 });
 
-const channelTypeOptions = ref<{ label: string; value: string }[]>([]);
 const configOptions = ref<GroupConfigOption[]>([]);
-const channelTypesFetched = ref(false);
 const configOptionsFetched = ref(false);
 const hiddenConfigKeys = new Set(["failover_status_codes"]);
 
-// 跟踪用户是否已手动修改过字段（仅在新增模式下使用）
-const userModifiedFields = ref({
-  test_model: false,
-  upstream: false,
+const currentChannelDescriptor = computed<ChannelDescriptor | undefined>(() =>
+  channelTypes.value.find(item => item.id === formData.channel_type)
+);
+const isGenericHttp = computed(() => formData.channel_type === "generic-http");
+const genericHttpPresets = computed(() => currentChannelDescriptor.value?.presets || []);
+const channelTypeOptions = computed(() => {
+  const options = channelTypes.value.map(item => ({
+    label: item.display_name,
+    value: item.id,
+    disabled: false,
+  }));
+  if (
+    props.group?.channel_type &&
+    !options.some(item => item.value === props.group?.channel_type)
+  ) {
+    options.push({
+      label: `${props.group.channel_type} (${t("channels.unavailable")})`,
+      value: props.group.channel_type,
+      disabled: true,
+    });
+  }
+  return options;
 });
 
-// 根据渠道类型动态生成占位符提示
-const testModelPlaceholder = computed(() => {
-  switch (formData.channel_type) {
-    case "openai":
-    case "openai-response":
-      return "gpt-4.1-nano";
-    case "gemini":
-      return "gemini-2.0-flash-lite";
-    case "anthropic":
-      return "claude-3-haiku-20240307";
-    default:
-      return t("keys.enterModelName");
+const defaultTestModel = computed(() => currentChannelDescriptor.value?.defaults.test_model || "");
+const defaultUpstream = computed(() => currentChannelDescriptor.value?.defaults.upstream_url || "");
+const testModelPlaceholder = computed(() => defaultTestModel.value || t("keys.enterModelName"));
+const upstreamPlaceholder = computed(() => defaultUpstream.value || t("keys.enterUpstreamUrl"));
+const validationEndpointPlaceholder = computed(
+  () =>
+    currentChannelDescriptor.value?.defaults.validation_endpoint || t("keys.enterValidationPath")
+);
+const showTestModel = computed(
+  () => currentChannelDescriptor.value?.capabilities.test_model !== "hidden"
+);
+const showValidationEndpoint = computed(
+  () => currentChannelDescriptor.value?.capabilities.validation_endpoint !== false
+);
+const showModelRedirect = computed(
+  () => currentChannelDescriptor.value?.capabilities.model_redirect !== false
+);
+const showParamOverrides = computed(
+  () => currentChannelDescriptor.value?.capabilities.param_overrides !== false
+);
+const showHeaderRules = computed(
+  () => currentChannelDescriptor.value?.capabilities.header_rules !== false
+);
+const showAffinity = computed(
+  () => currentChannelDescriptor.value?.capabilities.affinity !== false
+);
+const serializeForm = () => JSON.stringify(formData);
+const isDirty = computed(
+  () =>
+    props.show &&
+    formInitialized.value &&
+    Boolean(savedSnapshot.value) &&
+    serializeForm() !== savedSnapshot.value
+);
+
+let initializationRun = 0;
+let beforeUnloadRegistered = false;
+let discardConfirmation: Promise<boolean> | null = null;
+
+function addBeforeUnloadListener() {
+  if (!beforeUnloadRegistered) {
+    globalThis.addEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = true;
+  }
+}
+
+function removeBeforeUnloadListener() {
+  if (beforeUnloadRegistered) {
+    globalThis.removeEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = false;
+  }
+}
+
+function clearDirtyTracking() {
+  formInitialized.value = false;
+  savedSnapshot.value = "";
+  removeBeforeUnloadListener();
+}
+
+function captureSavedSnapshot() {
+  savedSnapshot.value = serializeForm();
+  formInitialized.value = true;
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!isDirty.value) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = t("keys.groupFormLeaveWarning");
+}
+
+watch(isDirty, dirty => {
+  if (dirty) {
+    addBeforeUnloadListener();
+  } else {
+    removeBeforeUnloadListener();
   }
 });
 
-const upstreamPlaceholder = computed(() => {
-  switch (formData.channel_type) {
-    case "openai":
-    case "openai-response":
-      return "https://api.openai.com";
-    case "gemini":
-      return "https://generativelanguage.googleapis.com";
-    case "anthropic":
-      return "https://api.anthropic.com";
-    default:
-      return t("keys.enterUpstreamUrl");
-  }
-});
-
-const validationEndpointPlaceholder = computed(() => {
-  switch (formData.channel_type) {
-    case "openai":
-      return "/v1/chat/completions";
-    case "openai-response":
-      return "/v1/responses";
-    case "anthropic":
-      return "/v1/messages";
-    case "gemini":
-      return ""; // Gemini 不显示此字段
-    default:
-      return t("keys.enterValidationPath");
-  }
-});
+onBeforeUnmount(removeBeforeUnloadListener);
 
 // 表单验证规则
 const rules: FormRules = {
@@ -206,8 +281,15 @@ const rules: FormRules = {
   ],
   test_model: [
     {
-      required: true,
-      message: t("keys.enterTestModel"),
+      validator: (_rule, value: unknown) => {
+        if (
+          currentChannelDescriptor.value?.capabilities.test_model === "required" &&
+          (typeof value !== "string" || !value.trim())
+        ) {
+          return new Error(t("keys.enterTestModel"));
+        }
+        return true;
+      },
       trigger: ["blur", "input"],
     },
   ],
@@ -221,89 +303,101 @@ const rules: FormRules = {
   ],
 };
 
+function upstreamUrlRule() {
+  return {
+    required: true,
+    validator: (_rule: unknown, value: unknown) => {
+      if (typeof value !== "string" || !value.trim()) {
+        return new Error(t("keys.enterUpstreamUrl"));
+      }
+      if (isGenericHttp.value && !isValidHttpUpstreamUrl(value)) {
+        return new Error(t("channels.validation.upstreamInvalid"));
+      }
+      return true;
+    },
+    trigger: ["blur", "input"],
+  };
+}
+
 // 监听弹窗显示状态
 watch(
   () => props.show,
-  show => {
-    if (show) {
-      if (!channelTypesFetched.value) {
-        fetchChannelTypes();
+  async show => {
+    const run = ++initializationRun;
+    if (!show) {
+      initializing.value = false;
+      clearDirtyTracking();
+      return;
+    }
+
+    initializing.value = true;
+    clearDirtyTracking();
+    try {
+      try {
+        await loadCatalog();
+      } catch {
+        message.warning(t("channels.catalogLoadFailed"));
       }
       if (!configOptionsFetched.value) {
-        fetchGroupConfigOptions();
+        try {
+          await fetchGroupConfigOptions();
+        } catch {
+          message.warning(t("keys.configOptionsLoadFailed"));
+        }
+      }
+      if (run !== initializationRun || !props.show) {
+        return;
       }
       resetForm();
       if (props.group) {
         loadGroupData();
       }
-    }
-  }
-);
-
-// 监听渠道类型变化，在新增模式下智能更新默认值
-watch(
-  () => formData.channel_type,
-  (_newChannelType, oldChannelType) => {
-    if (!props.group && oldChannelType) {
-      // 仅在新增模式且不是初始设置时处理
-      // 检查测试模型是否应该更新（为空或是旧渠道类型的默认值）
-      if (
-        !userModifiedFields.value.test_model ||
-        formData.test_model === getOldDefaultTestModel(oldChannelType)
-      ) {
-        formData.test_model = testModelPlaceholder.value;
-        userModifiedFields.value.test_model = false;
+      await nextTick();
+      if (run === initializationRun && props.show) {
+        captureSavedSnapshot();
       }
-
-      // 检查第一个上游地址是否应该更新
-      if (
-        formData.upstreams.length > 0 &&
-        (!userModifiedFields.value.upstream ||
-          formData.upstreams[0].url === getOldDefaultUpstream(oldChannelType))
-      ) {
-        formData.upstreams[0].url = upstreamPlaceholder.value;
-        userModifiedFields.value.upstream = false;
+    } finally {
+      if (run === initializationRun) {
+        initializing.value = false;
       }
     }
   }
 );
 
-// 获取旧渠道类型的默认值（用于比较）
-function getOldDefaultTestModel(channelType: string): string {
-  switch (channelType) {
-    case "openai":
-    case "openai-response":
-      return "gpt-4.1-nano";
-    case "gemini":
-      return "gemini-2.0-flash-lite";
-    case "anthropic":
-      return "claude-3-haiku-20240307";
-    default:
-      return "";
-  }
-}
-
-function getOldDefaultUpstream(channelType: string): string {
-  switch (channelType) {
-    case "openai":
-    case "openai-response":
-      return "https://api.openai.com";
-    case "gemini":
-      return "https://generativelanguage.googleapis.com";
-    case "anthropic":
-      return "https://api.anthropic.com";
-    default:
-      return "";
-  }
+function handleChannelTypeChange(channelType: string) {
+  const descriptor = channelTypes.value.find(item => item.id === channelType);
+  const defaults = descriptor?.defaults || {
+    upstream_url: "",
+    test_model: "",
+    validation_endpoint: "",
+  };
+  Object.assign(formData, {
+    channel_type: channelType,
+    upstreams: [{ url: defaults.upstream_url, weight: 1 }],
+    test_model: defaults.test_model,
+    validation_endpoint: defaults.validation_endpoint,
+    channel_config:
+      channelType === "generic-http" ? normalizeGenericHttpConfig(undefined) : undefined,
+    param_overrides:
+      descriptor?.capabilities.param_overrides === false ? "" : formData.param_overrides,
+    model_redirect_rules:
+      descriptor?.capabilities.model_redirect === false ? "" : formData.model_redirect_rules,
+    model_redirect_strict:
+      descriptor?.capabilities.model_redirect === false ? false : formData.model_redirect_strict,
+  });
+  genericHttpConfigValid.value = true;
 }
 
 // 重置表单
 function resetForm() {
   const isCreateMode = !props.group;
-  const defaultChannelType = "openai";
-
-  // 先设置渠道类型，这样 computed 属性能正确计算默认值
-  formData.channel_type = defaultChannelType;
+  const defaultChannelType = catalog.value.default_channel_type || "openai";
+  const descriptor = channelTypes.value.find(item => item.id === defaultChannelType);
+  const defaults = descriptor?.defaults || {
+    upstream_url: "",
+    test_model: "",
+    validation_endpoint: "",
+  };
 
   Object.assign(formData, {
     name: "",
@@ -311,14 +405,18 @@ function resetForm() {
     description: "",
     upstreams: [
       {
-        url: isCreateMode ? upstreamPlaceholder.value : "",
+        url: isCreateMode ? defaults.upstream_url : "",
         weight: 1,
       },
     ],
     channel_type: defaultChannelType,
+    channel_config:
+      isCreateMode && defaultChannelType === "generic-http"
+        ? normalizeGenericHttpConfig(undefined)
+        : undefined,
     sort: 1,
-    test_model: isCreateMode ? testModelPlaceholder.value : "",
-    validation_endpoint: "",
+    test_model: isCreateMode ? defaults.test_model : "",
+    validation_endpoint: isCreateMode ? defaults.validation_endpoint : "",
     param_overrides: "",
     model_redirect_rules: "",
     model_redirect_strict: false,
@@ -329,14 +427,7 @@ function resetForm() {
     proxy_keys: "",
     group_type: "standard",
   });
-
-  // 重置用户修改状态追踪
-  if (isCreateMode) {
-    userModifiedFields.value = {
-      test_model: false,
-      upstream: false,
-    };
-  }
+  genericHttpConfigValid.value = true;
 }
 
 // 加载分组数据（编辑模式）
@@ -361,6 +452,9 @@ function loadGroupData() {
       ? [...props.group.upstreams]
       : [{ url: "", weight: 1 }],
     channel_type: props.group.channel_type || "openai",
+    channel_config: props.group.channel_config
+      ? JSON.parse(JSON.stringify(props.group.channel_config))
+      : undefined,
     sort: props.group.sort || 1,
     test_model: props.group.test_model || "",
     validation_endpoint: props.group.validation_endpoint || "",
@@ -393,30 +487,43 @@ function loadGroupData() {
   });
 }
 
-async function fetchChannelTypes() {
-  const options = (await settingsApi.getChannelTypes()) || [];
-  channelTypeOptions.value =
-    options?.map((type: string) => ({
-      label: type,
-      value: type,
-    })) || [];
-  channelTypesFetched.value = true;
-}
-
 // 添加上游地址
 function addUpstream() {
   formData.upstreams.push({
     url: "",
     weight: 1,
   });
+  markGenericPresetCustom();
 }
 
 // 删除上游地址
 function removeUpstream(index: number) {
   if (formData.upstreams.length > 1) {
     formData.upstreams.splice(index, 1);
+    markGenericPresetCustom();
   } else {
     message.warning(t("keys.atLeastOneUpstream"));
+  }
+}
+
+function replaceGenericUpstreams(upstreams: UpstreamInfo[]) {
+  formData.upstreams = upstreams.map(upstream => ({ ...upstream }));
+}
+
+function applyGenericPreset(payload: { config: ChannelConfig; upstreams: UpstreamInfo[] }) {
+  Object.assign(formData, {
+    channel_config: JSON.parse(JSON.stringify(payload.config)),
+    upstreams: payload.upstreams.map(upstream => ({ ...upstream })),
+  });
+}
+
+function markGenericPresetCustom() {
+  if (!isGenericHttp.value || !formData.channel_config) {
+    return;
+  }
+  const normalized = normalizeGenericHttpConfig(formData.channel_config);
+  if (normalized.preset_id !== "custom") {
+    formData.channel_config = { ...normalized, preset_id: "custom" };
   }
 }
 
@@ -510,6 +617,27 @@ function validateHeaderKeyUniqueness(
   );
 }
 
+function getHeaderRuleError(index: number, key: string): string {
+  const name = key.trim();
+  if (!name) {
+    return "";
+  }
+  if (!validateHeaderKeyUniqueness(formData.header_rules, index, name)) {
+    return t("keys.duplicateHeader");
+  }
+  if (!isHttpHeaderToken(name) || isReservedProxyHeaderName(name)) {
+    return t("channels.validation.headersProtected");
+  }
+  if (isGenericHttp.value) {
+    const genericConfig = normalizeGenericHttpConfig(formData.channel_config);
+    const lower = name.toLowerCase();
+    if (genericConfig.auth.name.toLowerCase() === lower) {
+      return t("channels.validation.headersProtected");
+    }
+  }
+  return "";
+}
+
 // 当配置项的key改变时，设置默认值
 function handleConfigKeyChange(index: number, key: string) {
   const option = configOptions.value.find(opt => opt.key === key);
@@ -523,25 +651,101 @@ const getConfigOption = (key: string) => {
   return configOptions.value.find(opt => opt.key === key);
 };
 
-// 关闭弹窗
-function handleClose() {
+function closeWithoutPrompt() {
+  clearDirtyTracking();
   emit("update:show", false);
 }
 
+function confirmDiscard(): Promise<boolean> {
+  if (!isDirty.value) {
+    return Promise.resolve(true);
+  }
+  if (discardConfirmation) {
+    return discardConfirmation;
+  }
+
+  discardConfirmation = new Promise(resolve => {
+    let settled = false;
+    const finish = (discard: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      discardConfirmation = null;
+      resolve(discard);
+    };
+    dialog.warning({
+      title: t("keys.discardGroupChangesTitle"),
+      content: t("keys.discardGroupChangesDescription"),
+      positiveText: t("keys.discardGroupChanges"),
+      negativeText: t("keys.continueEditingGroup"),
+      positiveButtonProps: { type: "warning" },
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+      onMaskClick: () => finish(false),
+    });
+  });
+  return discardConfirmation;
+}
+
+async function requestClose() {
+  if (await confirmDiscard()) {
+    closeWithoutPrompt();
+  }
+}
+
+function handleModalShowChange(show: boolean) {
+  if (!show) {
+    void requestClose();
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  if (!(await confirmDiscard())) {
+    return false;
+  }
+  clearDirtyTracking();
+  return true;
+});
+
 // 提交表单
 async function handleSubmit() {
-  if (loading.value) {
+  if (loading.value || initializing.value) {
     return;
   }
 
   try {
-    await formRef.value?.validate();
+    if (typeof formRef.value?.validate === "function") {
+      await formRef.value.validate();
+    }
+
+    if (isGenericHttp.value && !genericHttpConfigValid.value) {
+      message.error(t("channels.validation.fixErrors"));
+      return;
+    }
+    if (isGenericHttp.value && !areValidHttpUpstreams(formData.upstreams)) {
+      message.error(t("channels.validation.allUpstreamsInvalid"));
+      return;
+    }
+    const genericConfig = isGenericHttp.value
+      ? normalizeGenericHttpConfig(formData.channel_config)
+      : undefined;
+    const invalidHeaderRule = formData.header_rules.findIndex((rule, index) =>
+      Boolean(getHeaderRuleError(index, rule.key))
+    );
+    if (invalidHeaderRule >= 0) {
+      message.error(
+        getHeaderRuleError(invalidHeaderRule, formData.header_rules[invalidHeaderRule].key)
+      );
+      return;
+    }
 
     loading.value = true;
 
     // 验证 JSON 格式
     let paramOverrides = {};
-    if (formData.param_overrides) {
+    if (showParamOverrides.value && formData.param_overrides) {
       try {
         paramOverrides = JSON.parse(formData.param_overrides);
       } catch {
@@ -552,7 +756,7 @@ async function handleSubmit() {
 
     // 验证模型重定向规则 JSON 格式
     let modelRedirectRules = {};
-    if (formData.model_redirect_rules) {
+    if (showModelRedirect.value && formData.model_redirect_rules) {
       try {
         modelRedirectRules = JSON.parse(formData.model_redirect_rules);
 
@@ -595,6 +799,15 @@ async function handleSubmit() {
       }
     });
 
+    const channelSpecificFields = sanitizeChannelSpecificFields(
+      currentChannelDescriptor.value?.capabilities,
+      {
+        param_overrides: paramOverrides,
+        model_redirect_rules: modelRedirectRules as Record<string, string>,
+        model_redirect_strict: formData.model_redirect_strict,
+      }
+    );
+
     // 构建提交数据
     const submitData = {
       name: formData.name,
@@ -602,12 +815,11 @@ async function handleSubmit() {
       description: formData.description,
       upstreams: formData.upstreams.filter((upstream: UpstreamInfo) => upstream.url.trim()),
       channel_type: formData.channel_type,
+      channel_config: isGenericHttp.value ? genericConfig : undefined,
       sort: formData.sort,
-      test_model: formData.test_model,
-      validation_endpoint: formData.validation_endpoint,
-      param_overrides: paramOverrides,
-      model_redirect_rules: modelRedirectRules,
-      model_redirect_strict: formData.model_redirect_strict,
+      test_model: showTestModel.value ? formData.test_model : "",
+      validation_endpoint: showValidationEndpoint.value ? formData.validation_endpoint : "",
+      ...channelSpecificFields,
       config,
       header_rules: formData.header_rules
         .filter((rule: HeaderRuleItem) => rule.key.trim())
@@ -644,20 +856,30 @@ async function handleSubmit() {
       res = await keysApi.createGroup(submitData);
     }
 
+    clearDirtyTracking();
     emit("success", res);
     // 如果是新建模式，发出切换到新分组的事件
     if (!props.group?.id && res.id) {
       emit("switchToGroup", res.id);
     }
-    handleClose();
+    closeWithoutPrompt();
   } finally {
     loading.value = false;
   }
 }
+
+defineExpose({
+  formData,
+  handleChannelTypeChange,
+  handleSubmit,
+  initializing,
+  isDirty,
+  requestClose,
+});
 </script>
 
 <template>
-  <n-modal :show="show" @update:show="handleClose" class="group-form-modal">
+  <n-modal :show="show" @update:show="handleModalShowChange" class="group-form-modal">
     <n-card
       class="group-form-card"
       :title="group ? t('keys.editGroup') : t('keys.createGroup')"
@@ -665,9 +887,10 @@ async function handleSubmit() {
       size="huge"
       role="dialog"
       aria-modal="true"
+      :aria-busy="initializing"
     >
       <template #header-extra>
-        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="requestClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -678,10 +901,11 @@ async function handleSubmit() {
         ref="formRef"
         :model="formData"
         :rules="rules"
-        label-placement="left"
-        label-width="120px"
+        :label-placement="isMobile ? 'top' : 'left'"
+        :label-width="isMobile ? 'auto' : '120px'"
         require-mark-placement="right-hanging"
         class="group-form"
+        :disabled="initializing"
       >
         <!-- 基础信息 -->
         <div class="form-section">
@@ -735,9 +959,10 @@ async function handleSubmit() {
                 </div>
               </template>
               <n-select
-                v-model:value="formData.channel_type"
+                :value="formData.channel_type"
                 :options="channelTypeOptions"
                 :placeholder="t('keys.selectChannelType')"
+                @update:value="handleChannelTypeChange"
               />
             </n-form-item>
 
@@ -762,9 +987,26 @@ async function handleSubmit() {
             </n-form-item>
           </div>
 
+          <generic-http-channel-fields
+            v-if="isGenericHttp"
+            v-model="formData.channel_config"
+            :presets="genericHttpPresets"
+            :upstreams="formData.upstreams"
+            :group-name="formData.name"
+            :catalog-loading="initializing"
+            @update:upstreams="replaceGenericUpstreams"
+            @apply:preset="applyGenericPreset"
+            @validity="genericHttpConfigValid = $event"
+          />
+
           <!-- Test model and test path on the same row -->
-          <div class="form-row">
-            <n-form-item :label="t('keys.testModel')" path="test_model" class="form-item-half">
+          <div v-if="showTestModel || showValidationEndpoint" class="form-row">
+            <n-form-item
+              v-if="showTestModel"
+              :label="t('keys.testModel')"
+              path="test_model"
+              class="form-item-half"
+            >
               <template #label>
                 <div class="form-label-with-tooltip">
                   {{ t("keys.testModel") }}
@@ -776,18 +1018,14 @@ async function handleSubmit() {
                   </n-tooltip>
                 </div>
               </template>
-              <n-input
-                v-model:value="formData.test_model"
-                :placeholder="testModelPlaceholder"
-                @input="() => !props.group && (userModifiedFields.test_model = true)"
-              />
+              <n-input v-model:value="formData.test_model" :placeholder="testModelPlaceholder" />
             </n-form-item>
 
             <n-form-item
+              v-if="showValidationEndpoint"
               :label="t('keys.testPath')"
               path="validation_endpoint"
               class="form-item-half"
-              v-if="formData.channel_type !== 'gemini'"
             >
               <template #label>
                 <div class="form-label-with-tooltip">
@@ -818,8 +1056,7 @@ async function handleSubmit() {
               />
             </n-form-item>
 
-            <!-- When gemini channel, test path is hidden, need placeholder div to keep layout -->
-            <div v-else class="form-item-half" />
+            <div v-if="!showTestModel || !showValidationEndpoint" class="form-item-half" />
           </div>
 
           <!-- Proxy keys -->
@@ -874,11 +1111,7 @@ async function handleSubmit() {
             :key="index"
             :label="`${t('keys.upstream')} ${index + 1}`"
             :path="`upstreams[${index}].url`"
-            :rule="{
-              required: true,
-              message: '',
-              trigger: ['blur', 'input'],
-            }"
+            :rule="upstreamUrlRule()"
           >
             <template #label>
               <div class="form-label-with-tooltip">
@@ -896,7 +1129,7 @@ async function handleSubmit() {
                 <n-input
                   v-model:value="upstream.url"
                   :placeholder="upstreamPlaceholder"
-                  @input="() => !props.group && index === 0 && (userModifiedFields.upstream = true)"
+                  @input="markGenericPresetCustom"
                 />
               </div>
               <div class="upstream-weight">
@@ -908,6 +1141,7 @@ async function handleSubmit() {
                       :min="0"
                       :placeholder="t('keys.weight')"
                       style="width: 100%"
+                      @update:value="markGenericPresetCustom"
                     />
                   </template>
                   {{ t("keys.weightTooltip") }}
@@ -1072,7 +1306,7 @@ async function handleSubmit() {
                 </div>
               </div>
 
-              <div class="config-section">
+              <div v-if="showHeaderRules" class="config-section">
                 <h5 class="config-title-with-tooltip">
                   {{ t("keys.customHeaders") }}
                   <n-tooltip trigger="hover" placement="top">
@@ -1120,27 +1354,10 @@ async function handleSubmit() {
                         <n-input
                           v-model:value="headerRule.key"
                           :placeholder="t('keys.headerName')"
-                          :status="
-                            !validateHeaderKeyUniqueness(
-                              formData.header_rules,
-                              index,
-                              headerRule.key
-                            )
-                              ? 'error'
-                              : undefined
-                          "
+                          :status="getHeaderRuleError(index, headerRule.key) ? 'error' : undefined"
                         />
-                        <div
-                          v-if="
-                            !validateHeaderKeyUniqueness(
-                              formData.header_rules,
-                              index,
-                              headerRule.key
-                            )
-                          "
-                          class="error-message"
-                        >
-                          {{ t("keys.duplicateHeader") }}
+                        <div v-if="getHeaderRuleError(index, headerRule.key)" class="error-message">
+                          {{ getHeaderRuleError(index, headerRule.key) }}
                         </div>
                       </div>
                       <div class="header-value" v-if="headerRule.action === 'set'">
@@ -1194,7 +1411,7 @@ async function handleSubmit() {
               </div>
 
               <!-- Key 亲和性规则 -->
-              <div class="config-section">
+              <div v-if="showAffinity" class="config-section">
                 <h5 class="config-title-with-tooltip">
                   {{ t("keys.keyAffinity") }}
                   <n-tooltip trigger="hover" placement="top">
@@ -1320,7 +1537,10 @@ async function handleSubmit() {
               </div>
 
               <!-- 模型重定向配置 -->
-              <div v-if="formData.group_type !== 'aggregate'" class="config-section">
+              <div
+                v-if="formData.group_type !== 'aggregate' && showModelRedirect"
+                class="config-section"
+              >
                 <n-form-item path="model_redirect_strict">
                   <template #label>
                     <div class="form-label-with-tooltip">
@@ -1381,7 +1601,7 @@ async function handleSubmit() {
                 </n-form-item>
               </div>
 
-              <div class="config-section">
+              <div v-if="showParamOverrides" class="config-section">
                 <n-form-item path="param_overrides">
                   <template #label>
                     <div class="form-label-with-tooltip">
@@ -1408,9 +1628,14 @@ async function handleSubmit() {
       </n-form>
 
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 12px">
-          <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
-          <n-button type="primary" @click="handleSubmit" :loading="loading">
+        <div class="modal-footer">
+          <n-button @click="requestClose">{{ t("common.cancel") }}</n-button>
+          <n-button
+            type="primary"
+            @click="handleSubmit"
+            :loading="loading || initializing"
+            :disabled="initializing"
+          >
             {{ group ? t("common.update") : t("common.create") }}
           </n-button>
         </div>
@@ -1421,7 +1646,14 @@ async function handleSubmit() {
 
 <style scoped>
 .group-form-modal {
-  width: 800px;
+  width: min(880px, calc(100vw - 2rem));
+}
+
+.group-form-card {
+  display: flex;
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .form-section {
@@ -1458,18 +1690,28 @@ async function handleSubmit() {
 }
 
 :deep(.n-card-header) {
+  flex-shrink: 0;
   border-bottom: 1px solid var(--border-color);
   padding: 10px 20px;
 }
 
 :deep(.n-card__content) {
-  max-height: calc(100vh - 68px - 61px - 50px);
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 :deep(.n-card__footer) {
+  flex-shrink: 0;
   border-top: 1px solid var(--border-color);
   padding: 10px 15px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 :deep(.n-form-item-feedback-wrapper) {
@@ -1706,8 +1948,23 @@ async function handleSubmit() {
 }
 
 @media (max-width: 768px) {
+  .group-form-modal {
+    width: calc(100vw - 1rem);
+  }
+
   .group-form-card {
-    width: 100vw !important;
+    width: 100% !important;
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .group-form-card :deep(.n-card-header),
+  .group-form-card :deep(.n-card__content),
+  .group-form-card :deep(.n-card__footer) {
+    padding-inline: var(--space-3);
+  }
+
+  .group-form-card :deep(.n-card__footer) {
+    padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   }
 
   .group-form {
@@ -1751,6 +2008,15 @@ async function handleSubmit() {
   .upstream-actions,
   .config-actions {
     justify-content: flex-end;
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-footer :deep(.n-button) {
+    min-height: 44px;
   }
 }
 

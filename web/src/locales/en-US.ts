@@ -154,6 +154,12 @@ export default {
     subGroupTooltip:
       "Shows available standard groups based on selected channel type, weights determine traffic distribution ratio",
     editGroup: "Edit Group",
+    discardGroupChangesTitle: "Discard unsaved group changes?",
+    discardGroupChangesDescription:
+      "Closing this form or leaving the page will lose the group configuration you have not saved.",
+    discardGroupChanges: "Discard changes",
+    continueEditingGroup: "Continue editing",
+    groupFormLeaveWarning: "The group configuration is not saved. Leave anyway?",
     deleteGroup: "Delete Group",
     confirmDeleteGroup: "Are you sure to delete group {name}?",
     dangerousOperation: "This is a dangerous operation that will delete group ",
@@ -349,6 +355,8 @@ export default {
       "Load balancing weight configuration. Weight determines traffic distribution ratio - higher values receive more traffic. Weight 0 disables the upstream (no requests). Example: Weight 2:1 means the first receives ~67% of traffic",
     addUpstream: "Add Upstream",
     groupConfig: "Group Configuration",
+    configOptionsLoadFailed:
+      "Group configuration options could not be loaded. You can still edit the basic fields.",
     groupConfigTooltip:
       "Group-specific configuration parameters like timeout, retry count, etc. These settings override global defaults",
     config: "Config",
@@ -396,9 +404,9 @@ export default {
     modelRedirectInvalidFormat: "Model redirect rule keys and values must all be strings",
     modelRedirectEmptyModel: "Model name cannot be empty",
     // Key Affinity
-    keyAffinity: "Key Affinity",
+    keyAffinity: "Request key affinity",
     keyAffinityTooltip:
-      "Configure key affinity rules to route requests with the same characteristics to the same API key",
+      "Pin an API key from a user, tenant, or custom value already present in the request. This does not pin a child group or upstream node.",
     affinityRuleName: "Rule Name",
     affinityRuleNamePlaceholder: "e.g. user-affinity",
     affinityMatchPathRegex: "Path Match",
@@ -475,6 +483,164 @@ export default {
     onlyTxtFileSupported: "Only .txt files are supported",
     fileImportedSuccessfully: "File imported successfully",
     fileReadError: "Failed to read file",
+  },
+  channels: {
+    unavailable: "Unavailable",
+    catalogLoadFailed: "The channel catalog could not be loaded. Compatibility mode is active.",
+    catalogFallback:
+      "No preset catalog is available. You can still use a custom configuration; review it carefully before saving.",
+    serviceAndProtocol: "Service and connection",
+    serviceAndProtocolDescription:
+      "Start with a verified service preset, then reveal transport details only when needed.",
+    transparentProxy: "Generic HTTP transparent proxy",
+    transparentProxyDescription:
+      "Forward requests and responses unchanged while replacing the client proxy credential with the selected upstream key. Presets only fill in fields for you.",
+    selectPreset: "Select a service preset",
+    custom: "Custom",
+    upstreamBaseUrl: "Upstream base URL",
+    upstreamBaseUrlPlaceholder: "Enter an upstream URL below",
+    editUpstreamBelow: "Edit the upstream URL or add weighted nodes in the section below.",
+    upstreamCount: "{count} upstream nodes configured",
+    advancedTransport: "Advanced transport and validation",
+    maxRequestBody: "Maximum request body (bytes)",
+    maxErrorBody: "Maximum error response body (bytes)",
+    sections: {
+      transport: "Transport",
+      transportDescription:
+        "In Auto mode, long-lived clients must send Accept: text/event-stream; choose Always stream when that header cannot be controlled. A response media type enables flushing but does not remove the normal request deadline.",
+      authentication: "Credential injection",
+      authenticationDescription:
+        "Each request injects only the currently selected upstream key into the configured header; complete credentials are never previewed.",
+      validation: "Key validation",
+      failover: "Failover",
+    },
+    presetGroups: {
+      httpApi: "HTTP API",
+      hostedMcp: "Hosted MCP",
+      custom: "Custom",
+    },
+    presetReplace: {
+      title: "Replace every upstream node?",
+      description:
+        "There are {count} upstream nodes. Applying this preset atomically replaces all URLs and the complete configuration so credentials cannot continue to reach a previous provider.",
+      confirm: "Replace and apply",
+    },
+    protocol: {
+      label: "Transport protocol",
+      http: "Standard HTTP API",
+      mcp: "MCP Streamable HTTP",
+      httpShort: "HTTP",
+      mcpShort: "Hosted MCP",
+    },
+    auth: {
+      header: "Request header",
+      headerName: "Authentication header",
+      prefix: "Value prefix",
+      prefixPlaceholder: "For example, Bearer followed by a space",
+    },
+    stream: {
+      label: "Response streaming",
+      never: "Always buffer",
+      auto: "Auto (Accept / response media type)",
+      always: "Always stream",
+    },
+    validation: {
+      title: "Key validation",
+      description:
+        "Validation uses the same credential injection rules without putting complete keys in URLs or previews.",
+      enabled: "Enable key validation",
+      baseUrl: "Validation base URL",
+      baseUrlPlaceholder: "Leave blank to use the upstream URL",
+      method: "Validation method",
+      path: "Validation path",
+      validStatuses: "Valid status codes",
+      invalidStatuses: "Invalid status codes",
+      headers: "Additional headers (JSON)",
+      body: "Validation body (JSON)",
+      bodyPlaceholder: "Must be empty for GET and HEAD",
+      headersInvalid: "Headers must be a JSON object whose values are strings",
+      headersProtected:
+        "A header name or value is invalid, or conflicts with an authentication header managed by the proxy",
+      bodyInvalid: "The request body must be valid JSON",
+      bodyTooLarge: "The validation body cannot exceed 64 KiB",
+      statusesInvalid: "Enter status codes from 100 to 599, separated by commas",
+      statusOverlap: "Valid and invalid status codes cannot overlap",
+      upstreamInvalid: "Enter an absolute HTTP(S) URL without credentials, a query, or a fragment",
+      baseUrlInvalid:
+        "Validation URL must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+      pathInvalid: "Path must begin with one / and cannot be a complete URL",
+      authNameInvalid: "The authentication name contains invalid characters",
+      authNameProtected: "This header is managed by the proxy transport policy",
+      prefixInvalid: "The value prefix cannot contain line breaks or exceed 128 characters",
+      methodBodyInvalid: "GET and HEAD validation requests cannot contain a body",
+      fixErrors: "Fix the errors in the Generic HTTP configuration before saving",
+      allUpstreamsInvalid:
+        "Every upstream must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+    },
+    retry: {
+      description:
+        "Failover statuses enter error and key-health policy; when empty, every HTTP response is returned transparently. Only safe methods may switch keys after a transport failure or one of these statuses.",
+      postWarning:
+        "POST switches keys only when it is also listed as safe and an explicit failover status is returned. Never allow replay of a request the upstream may already have accepted.",
+      safeMethods: "Methods safe after a transport failure",
+      failoverStatuses: "Failover statuses",
+      failoverStatusesPlaceholder: "Leave blank to return every status transparently",
+      methodsInvalid: "Enter valid HTTP methods separated by commas",
+      statusesInvalid: "Enter 300–599 statuses separated by commas, or leave blank",
+    },
+    integration: {
+      mcpTitle: "Hosted MCP preset connection",
+      mcpDescription:
+        "Currently supports stateless Streamable HTTP only: each request rotates keys independently, and stateful sessions that require a fixed credential or upstream node are not guaranteed. Import multiple keys into this standard group; you do not need one child group per key.",
+      presetOnly: "Preset helper",
+      stdioWarning:
+        "Official local stdio packages usually connect directly to the provider API and do not automatically use this proxy. Only remote HTTP clients pointed at the GPT Load URL below use this group.",
+      copyEndpoint: "Copy MCP endpoint",
+      copyConfig: "Copy generic configuration",
+      copied: "Copied",
+    },
+    aggregate: {
+      parentDerived:
+        "A Generic HTTP aggregate stores no parent proxy configuration. Runtime policy is derived from its children, whose configurations must match exactly.",
+      genericCompatibility:
+        "Only groups whose normalized Generic HTTP configuration exactly matches the selected or existing child are shown. The first child defines the aggregate contract.",
+      configMismatch:
+        "Every child in a Generic HTTP aggregate must have exactly matching configuration",
+    },
+    presets: {
+      "tavily-http": {
+        name: "Tavily HTTP",
+        description: "Search, extract, and usage APIs with multi-key rotation.",
+      },
+      "tavily-mcp": {
+        name: "Tavily Hosted MCP",
+        description: "Relay Tavily's official Streamable HTTP MCP endpoint.",
+      },
+      "exa-http": {
+        name: "Exa HTTP",
+        description: "Access Exa Search through x-api-key authentication.",
+      },
+      "exa-mcp": {
+        name: "Exa Hosted MCP",
+        description: "Relay Exa's official Streamable HTTP MCP endpoint.",
+      },
+      "jina-reader": {
+        name: "Jina Reader",
+        description: "Turn web pages and documents into model-ready content.",
+      },
+      "jina-search": {
+        name: "Jina Search",
+        description: "Use Jina Search Foundation web search.",
+      },
+      "jina-foundation": {
+        name: "Jina Foundation",
+        description: "Access Jina Embeddings, Reranker, and other foundation APIs.",
+      },
+      custom: {
+        name: "Custom HTTP",
+        description: "Configure URL, credential injection, validation, and streaming yourself.",
+      },
+    },
   },
   subGroups: {
     addSubGroup: "Add Sub Group",

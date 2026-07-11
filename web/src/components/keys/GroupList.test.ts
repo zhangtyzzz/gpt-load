@@ -1,4 +1,5 @@
 import type { Group } from "@/types/models";
+import { NButton } from "naive-ui";
 import { config, shallowMount } from "@vue/test-utils";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +18,7 @@ vi.mock("@/api/keys", () => ({
 }));
 
 import GroupList from "./GroupList.vue";
+import groupListSource from "./GroupList.vue?raw";
 
 function makeGroup(id: number, channelType: Group["channel_type"]): Group {
   return {
@@ -66,6 +68,8 @@ describe("GroupList visual state contracts", () => {
     expect(wrapper.find(".channel-tag--success").exists()).toBe(true);
     expect(wrapper.find(".channel-tag--info").exists()).toBe(true);
     expect(wrapper.find('.group-select-control[aria-pressed="true"]').exists()).toBe(true);
+    expect(wrapper.find(".groups-section--scrollable").exists()).toBe(true);
+    expect(wrapper.findAllComponents(NButton)).toHaveLength(2);
   });
 
   it("renders long provider metadata inside the selected item", () => {
@@ -81,5 +85,15 @@ describe("GroupList visual state contracts", () => {
 
     expect(wrapper.find(".group-item.active").text()).toContain("#group-20");
     expect(wrapper.find(".channel-tag--success").text()).toContain("openai-response");
+    expect(wrapper.find(".groups-section--scrollable").exists()).toBe(false);
+    expect(wrapper.findAllComponents(NButton)).toHaveLength(2);
+  });
+
+  it("uses content height for short mobile lists and only constrains long lists", () => {
+    expect(groupListSource).toMatch(/\.groups-section\s*\{[\s\S]*?height:\s*auto/);
+    expect(groupListSource).toMatch(
+      /\.groups-section--scrollable\s*\{[\s\S]*?height:\s*min\(60dvh, 36rem\)/
+    );
+    expect(groupListSource).toContain(".groups-section--scrollable .groups-list");
   });
 });

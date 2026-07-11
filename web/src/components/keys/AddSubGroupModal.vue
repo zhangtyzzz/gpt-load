@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { keysApi } from "@/api/keys";
+import { normalizeGenericHttpConfig } from "@/composables/useChannelCatalog";
 import type { Group, SubGroupInfo } from "@/types/models";
+import { channelConfigsExactlyMatch } from "@/utils/channel-form";
 import { getGroupDisplayName } from "@/utils/display";
 import { Add, Close } from "@vicons/ionicons5";
 import {
   NButton,
+  NAlert,
   NCard,
   NForm,
   NFormItem,
@@ -12,11 +15,13 @@ import {
   NInputNumber,
   NModal,
   NSelect,
+  useDialog,
   useMessage,
   type FormRules,
 } from "naive-ui";
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { onBeforeRouteLeave } from "vue-router";
 
 interface Props {
   show: boolean;
@@ -40,8 +45,11 @@ const emit = defineEmits<Emits>();
 
 const { t } = useI18n();
 const message = useMessage();
+const dialog = useDialog();
 const loading = ref(false);
 const formRef = ref();
+const savedSnapshot = ref("");
+const formInitialized = ref(false);
 
 // 表单数据
 const formData = reactive<{
@@ -49,6 +57,72 @@ const formData = reactive<{
 }>({
   sub_groups: [{ group_id: null, weight: 1 }],
 });
+const serializeForm = () => JSON.stringify(formData);
+const isDirty = computed(
+  () =>
+    props.show &&
+    formInitialized.value &&
+    Boolean(savedSnapshot.value) &&
+    serializeForm() !== savedSnapshot.value
+);
+
+let initializationRun = 0;
+let beforeUnloadRegistered = false;
+let discardConfirmation: Promise<boolean> | null = null;
+
+function addBeforeUnloadListener() {
+  if (!beforeUnloadRegistered) {
+    globalThis.addEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = true;
+  }
+}
+
+function removeBeforeUnloadListener() {
+  if (beforeUnloadRegistered) {
+    globalThis.removeEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadRegistered = false;
+  }
+}
+
+function clearDirtyTracking() {
+  formInitialized.value = false;
+  savedSnapshot.value = "";
+  removeBeforeUnloadListener();
+}
+
+function captureSavedSnapshot() {
+  savedSnapshot.value = serializeForm();
+  formInitialized.value = true;
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!isDirty.value) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = t("keys.groupFormLeaveWarning");
+}
+
+watch(isDirty, dirty => {
+  if (dirty) {
+    addBeforeUnloadListener();
+  } else {
+    removeBeforeUnloadListener();
+  }
+});
+
+onBeforeUnmount(removeBeforeUnloadListener);
+
+function genericConfigsMatch(left: Group, right: Group): boolean {
+  return channelConfigsExactlyMatch(
+    normalizeGenericHttpConfig(left.channel_config),
+    normalizeGenericHttpConfig(right.channel_config)
+  );
+}
+
+function groupById(id: number | null): Group | undefined {
+  return id === null ? undefined : props.groups.find(group => group.id === id);
+}
 
 // 计算可用的分组选项（排除已添加的）
 const getAvailableOptions = computed(() => {
@@ -91,10 +165,17 @@ const getAvailableOptions = computed(() => {
 
 // 为每个子分组项计算可用选项
 const getOptionsForItems = computed(() => {
-  const selectedIds = formData.sub_groups.map(sg => sg.group_id).filter(Boolean);
+  const existingReference = props.existingSubGroups[0]?.group;
 
   return formData.sub_groups.map((currentItem, currentIndex) => {
-    const otherSelectedIds = selectedIds.filter((_id, index) => index !== currentIndex);
+    const otherSelectedIds = formData.sub_groups
+      .filter((_item, index) => index !== currentIndex)
+      .map(item => item.group_id)
+      .filter((id): id is number => id !== null);
+    const selectedReference =
+      existingReference ||
+      groupById(currentItem.group_id) ||
+      formData.sub_groups.map(item => groupById(item.group_id)).find(group => group !== undefined);
 
     return getAvailableOptions.value.filter(option => {
       // 如果是当前项已选择的值，允许显示
@@ -102,7 +183,14 @@ const getOptionsForItems = computed(() => {
         return true;
       }
       // 否则只显示未被其他项选择的
-      return !otherSelectedIds.includes(option?.value || 0);
+      if (otherSelectedIds.includes(option?.value || 0)) {
+        return false;
+      }
+      if (props.aggregateGroup?.channel_type !== "generic-http" || !selectedReference) {
+        return true;
+      }
+      const candidate = groupById(option.value || null);
+      return Boolean(candidate && genericConfigsMatch(selectedReference, candidate));
     });
   });
 });
@@ -138,6 +226,16 @@ const rules: FormRules = {
         return new Error(t("keys.duplicateSubGroup"));
       }
 
+      if (props.aggregateGroup?.channel_type === "generic-http") {
+        const groups = validItems
+          .map(item => groupById(item.group_id))
+          .filter((group): group is Group => group !== undefined);
+        const reference = props.existingSubGroups[0]?.group || groups[0];
+        if (reference && groups.some(group => !genericConfigsMatch(reference, group))) {
+          return new Error(t("channels.aggregate.configMismatch"));
+        }
+      }
+
       return true;
     },
     trigger: ["blur", "change"],
@@ -147,11 +245,21 @@ const rules: FormRules = {
 // 监听弹窗显示状态
 watch(
   () => props.show,
-  show => {
-    if (show) {
-      resetForm();
+  async show => {
+    const run = ++initializationRun;
+    if (!show) {
+      clearDirtyTracking();
+      return;
     }
-  }
+
+    clearDirtyTracking();
+    resetForm();
+    await nextTick();
+    if (run === initializationRun && props.show) {
+      captureSavedSnapshot();
+    }
+  },
+  { immediate: true }
 );
 
 // 重置表单
@@ -171,10 +279,63 @@ function removeSubGroupItem(index: number) {
   }
 }
 
-// 关闭弹窗
-function handleClose() {
+function closeWithoutPrompt() {
+  clearDirtyTracking();
   emit("update:show", false);
 }
+
+function confirmDiscard(): Promise<boolean> {
+  if (!isDirty.value) {
+    return Promise.resolve(true);
+  }
+  if (discardConfirmation) {
+    return discardConfirmation;
+  }
+
+  discardConfirmation = new Promise(resolve => {
+    let settled = false;
+    const finish = (discard: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      discardConfirmation = null;
+      resolve(discard);
+    };
+    dialog.warning({
+      title: t("keys.discardGroupChangesTitle"),
+      content: t("keys.discardGroupChangesDescription"),
+      positiveText: t("keys.discardGroupChanges"),
+      negativeText: t("keys.continueEditingGroup"),
+      positiveButtonProps: { type: "warning" },
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+      onMaskClick: () => finish(false),
+    });
+  });
+  return discardConfirmation;
+}
+
+async function requestClose() {
+  if (await confirmDiscard()) {
+    closeWithoutPrompt();
+  }
+}
+
+function handleModalShowChange(show: boolean) {
+  if (!show) {
+    void requestClose();
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  if (!(await confirmDiscard())) {
+    return false;
+  }
+  clearDirtyTracking();
+  return true;
+});
 
 // 提交表单
 async function handleSubmit() {
@@ -183,7 +344,9 @@ async function handleSubmit() {
   }
 
   try {
-    await formRef.value?.validate();
+    if (typeof formRef.value?.validate === "function") {
+      await formRef.value.validate();
+    }
     loading.value = true;
 
     // 过滤出有效的子分组
@@ -199,8 +362,9 @@ async function handleSubmit() {
       validSubGroups as { group_id: number; weight: number }[]
     );
 
+    clearDirtyTracking();
     emit("success");
-    handleClose();
+    closeWithoutPrompt();
   } finally {
     loading.value = false;
   }
@@ -210,10 +374,12 @@ async function handleSubmit() {
 const canAddMore = computed(() => {
   return formData.sub_groups.length < getAvailableOptions.value.length;
 });
+
+defineExpose({ formData, handleSubmit, isDirty, requestClose });
 </script>
 
 <template>
-  <n-modal :show="show" @update:show="handleClose" class="add-sub-group-modal">
+  <n-modal :show="show" @update:show="handleModalShowChange" class="add-sub-group-modal">
     <n-card
       class="add-sub-group-card"
       :title="t('keys.addSubGroup')"
@@ -223,7 +389,7 @@ const canAddMore = computed(() => {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="requestClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -244,6 +410,14 @@ const canAddMore = computed(() => {
               ({{ t("keys.channelType") }}: {{ aggregateGroup?.channel_type?.toUpperCase() }})
             </span>
           </h4>
+
+          <n-alert
+            v-if="aggregateGroup?.channel_type === 'generic-http'"
+            type="info"
+            class="compatibility-alert"
+          >
+            {{ t("channels.aggregate.genericCompatibility") }}
+          </n-alert>
 
           <div class="sub-groups-list">
             <div v-for="(item, index) in formData.sub_groups" :key="index" class="sub-group-item">
@@ -309,7 +483,7 @@ const canAddMore = computed(() => {
 
       <template #footer>
         <div class="modal-footer">
-          <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
+          <n-button @click="requestClose">{{ t("common.cancel") }}</n-button>
           <n-button type="primary" @click="handleSubmit" :loading="loading">
             {{ t("common.confirm") }}
           </n-button>
@@ -356,6 +530,10 @@ const canAddMore = computed(() => {
   font-weight: 400;
   color: var(--text-secondary);
   margin-left: 8px;
+}
+
+.compatibility-alert {
+  margin-bottom: var(--space-4);
 }
 
 .sub-groups-list {
@@ -421,6 +599,10 @@ const canAddMore = computed(() => {
   .add-sub-group-card {
     width: min(700px, calc(100vw - 2rem));
     max-height: calc(100dvh - 1rem);
+  }
+
+  .add-sub-group-card :deep(.n-card__footer) {
+    padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   }
 
   .sub-group-item {

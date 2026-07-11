@@ -39,6 +39,7 @@ const draggingGroupId = ref<number | null>(null);
 const dropTarget = ref<{ groupId: number; position: "before" | "after" } | null>(null);
 const savingOrder = ref(false);
 const suspendAutoScroll = ref(false);
+const mobileScrollThreshold = 6;
 
 const isTouchDevice = computed(() => {
   if (typeof window === "undefined") {
@@ -87,6 +88,7 @@ const filteredGroups = computed(() => {
       group.display_name?.toLowerCase().includes(search)
   );
 });
+const hasScrollableMobileList = computed(() => filteredGroups.value.length > mobileScrollThreshold);
 
 // 监听选中项 ID 的变化，并自动滚动到该项
 watch(
@@ -371,7 +373,10 @@ defineExpose({ openCreateGroupModal });
       </div>
 
       <!-- 分组列表 -->
-      <div class="groups-section">
+      <div
+        class="groups-section"
+        :class="{ 'groups-section--scrollable': hasScrollableMobileList }"
+      >
         <n-spin :show="loading" size="small">
           <div v-if="filteredGroups.length === 0 && !loading" class="empty-container">
             <n-empty
@@ -777,8 +782,41 @@ button.group-icon:active,
   }
 
   .groups-section {
-    height: min(60dvh, 36rem);
+    height: auto;
+    max-height: none;
     flex: none;
+    overflow: visible;
+  }
+
+  .groups-section :deep(.n-spin-container),
+  .groups-section :deep(.n-spin-content),
+  .groups-list {
+    height: auto;
+  }
+
+  .groups-section :deep(.n-spin-content),
+  .groups-list {
+    overflow-y: visible;
+  }
+
+  .groups-section--scrollable {
+    height: min(60dvh, 36rem);
+    max-height: min(60dvh, 36rem);
+    overflow: hidden;
+  }
+
+  .groups-section--scrollable :deep(.n-spin-container),
+  .groups-section--scrollable :deep(.n-spin-content),
+  .groups-section--scrollable .groups-list {
+    height: 100%;
+  }
+
+  .groups-section--scrollable :deep(.n-spin-content) {
+    overflow: hidden;
+  }
+
+  .groups-section--scrollable .groups-list {
+    overflow-y: auto;
   }
 }
 </style>
