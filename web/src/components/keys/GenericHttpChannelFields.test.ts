@@ -4,6 +4,7 @@ import jaJP from "@/locales/ja-JP";
 import zhCN from "@/locales/zh-CN";
 import { NInput, NSelect, type SelectGroupOption, type SelectOption } from "naive-ui";
 import { config as testUtilsConfig, shallowMount, type VueWrapper } from "@vue/test-utils";
+import { h, type VNode } from "vue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { warning, success, error } = vi.hoisted(() => ({
@@ -275,6 +276,36 @@ describe("GenericHttpChannelFields", () => {
     expect(wrapper.find(".preset-summary").text()).toContain("channels.presets.custom.description");
     expect(genericHttpSource).not.toContain("preset-card");
     expect(genericHttpSource).not.toContain("route_affinity");
+  });
+
+  it("keeps custom option content above the Naive UI hover surface", () => {
+    const wrapper = mountFields({ presets: [preset("tavily-mcp", "hosted_mcp")] });
+    const select = findPresetSelect(wrapper);
+    const groups = select?.props("options") as SelectGroupOption[];
+    const option = flattenedOptions(groups).find(
+      item => item.value === "tavily-mcp"
+    ) as SelectOption;
+    const handleMouseenter = vi.fn();
+    const node = h("div", {
+      class: ["n-base-select-option", "n-base-select-option--pending"],
+      onMouseenter: handleMouseenter,
+    });
+    const renderOption = select?.props("renderOption") as (info: {
+      node: VNode;
+      option: SelectOption;
+      selected: boolean;
+    }) => VNode;
+    const rendered = renderOption({ node, option, selected: false });
+    const foreground = (rendered.children as VNode[])[0];
+
+    expect(select?.props("showCheckmark")).toBe(false);
+    expect(rendered.props?.onMouseenter).toBe(handleMouseenter);
+    expect(rendered.props?.class).toContain("n-base-select-option");
+    expect(rendered.props?.class).toContain("n-base-select-option--pending");
+    expect(rendered.props?.class).toContain("preset-option-shell");
+    expect(foreground.props?.class).toBe("preset-option-content");
+    expect(genericHttpSource).toContain(":global(.preset-option-content)");
+    expect(genericHttpSource).toContain("z-index: 1;");
   });
 
   it("describes auto streaming only through HTTP negotiation signals in every locale", () => {

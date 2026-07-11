@@ -200,28 +200,30 @@ const renderPresetOption: SelectRenderOption = ({ node, option, selected }) => {
       class: [node.props?.class, "preset-option-shell"],
     },
     [
-      h("div", { class: "preset-option-copy" }, [
-        h("span", { class: "preset-option-title" }, item.label),
-        h("span", { class: "preset-option-description" }, item.description),
+      h("div", { class: "preset-option-content" }, [
+        h("div", { class: "preset-option-copy" }, [
+          h("span", { class: "preset-option-title" }, item.label),
+          h("span", { class: "preset-option-description" }, item.description),
+        ]),
+        h(
+          NTag,
+          {
+            round: true,
+            size: "small",
+            bordered: false,
+            type:
+              item.category === "hosted-mcp"
+                ? "success"
+                : item.category === "http"
+                  ? "info"
+                  : "default",
+          },
+          { default: () => item.categoryLabel }
+        ),
+        selected
+          ? h(NIcon, { component: CheckmarkCircleOutline, class: "preset-option-check" })
+          : null,
       ]),
-      h(
-        NTag,
-        {
-          round: true,
-          size: "small",
-          bordered: false,
-          type:
-            item.category === "hosted-mcp"
-              ? "success"
-              : item.category === "http"
-                ? "info"
-                : "default",
-        },
-        { default: () => item.categoryLabel }
-      ),
-      selected
-        ? h(NIcon, { component: CheckmarkCircleOutline, class: "preset-option-check" })
-        : null,
     ]
   );
 };
@@ -628,6 +630,7 @@ async function copyValue(value: string) {
         :filter="filterPresetOption"
         :render-label="renderPresetLabel"
         :render-option="renderPresetOption"
+        :show-checkmark="false"
         filterable
         clear-filter-after-select
         @update:value="handlePresetSelection"
@@ -962,9 +965,16 @@ async function copyValue(value: string) {
 }
 
 :global(.preset-option-shell) {
-  display: grid;
   min-width: 0;
   min-height: 3.75rem;
+}
+
+:global(.preset-option-content) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 100%;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto 1.25rem;
   align-items: center;
   gap: 0.625rem;
@@ -1148,7 +1158,7 @@ async function copyValue(value: string) {
     white-space: pre;
   }
 
-  :global(.preset-option-shell) {
+  :global(.preset-option-content) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
