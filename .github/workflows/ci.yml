@@ -22,6 +22,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare embedded frontend fixture
+        run: |
+          # Backend compilation only needs an embed target. The frontend job
+          # below performs the real clean install, tests, and production build.
+          mkdir -p web/dist
+          touch web/dist/index.html
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
