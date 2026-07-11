@@ -442,7 +442,14 @@ defineExpose({ openCreateGroupModal });
                 <div class="group-content">
                   <div class="group-name">{{ getGroupDisplayName(group) }}</div>
                   <div class="group-meta">
-                    <n-tag size="tiny" :type="getChannelTagType(group.channel_type)">
+                    <n-tag
+                      size="tiny"
+                      :type="getChannelTagType(group.channel_type)"
+                      :class="[
+                        'channel-tag',
+                        `channel-tag--${getChannelTagType(group.channel_type)}`,
+                      ]"
+                    >
                       {{ group.channel_type }}
                     </n-tag>
                     <n-tag v-if="group.group_type === 'aggregate'" size="tiny" type="warning" round>
@@ -486,7 +493,10 @@ defineExpose({ openCreateGroupModal });
 
 <style scoped>
 :deep(.n-card__content) {
+  display: flex;
   height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .group-list-container,
@@ -497,6 +507,7 @@ defineExpose({ openCreateGroupModal });
 .group-list-card {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--card-bg-solid);
   border: 1px solid var(--border-color-light);
   border-radius: var(--border-radius-lg);
@@ -515,7 +526,17 @@ defineExpose({ openCreateGroupModal });
 .groups-section {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.groups-section :deep(.n-spin-container),
+.groups-section :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
+}
+
+.groups-section :deep(.n-spin-content) {
+  overflow: hidden;
 }
 
 .empty-container {
@@ -525,7 +546,7 @@ defineExpose({ openCreateGroupModal });
 .groups-list {
   display: flex;
   width: 100%;
-  max-height: 100%;
+  height: 100%;
   flex-direction: column;
   gap: var(--space-1);
   margin: 0;
@@ -540,6 +561,7 @@ defineExpose({ openCreateGroupModal });
   display: flex;
   box-sizing: border-box;
   min-height: 50px;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   padding: 0.375rem;
@@ -672,6 +694,30 @@ button.group-icon:active,
   opacity: 0.8;
 }
 
+.channel-tag {
+  --channel-tag-selected-color: var(--selected-tag-text);
+}
+
+.channel-tag--success {
+  --channel-tag-selected-color: var(--selected-tag-success-text);
+}
+
+.channel-tag--warning {
+  --channel-tag-selected-color: var(--selected-tag-warning-text);
+}
+
+.channel-tag--info {
+  --channel-tag-selected-color: var(--selected-tag-info-text);
+}
+
+.group-item.active :deep(.channel-tag) {
+  --n-border: 1px solid color-mix(in srgb, var(--channel-tag-selected-color) 38%, transparent) !important;
+  --n-color: var(--selected-tag-bg) !important;
+  --n-text-color: var(--channel-tag-selected-color) !important;
+
+  box-shadow: var(--selected-tag-shadow);
+}
+
 .group-item.active .group-icon {
   background: color-mix(in srgb, white 20%, transparent);
 }
@@ -720,6 +766,19 @@ button.group-icon:active,
 
   .add-section :deep(.n-button) {
     min-height: 44px;
+  }
+}
+
+@media (max-width: 767px) {
+  .group-list-container,
+  .group-list-card,
+  :deep(.n-card__content) {
+    height: auto;
+  }
+
+  .groups-section {
+    height: min(60dvh, 36rem);
+    flex: none;
   }
 }
 </style>
