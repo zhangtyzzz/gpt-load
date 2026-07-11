@@ -113,7 +113,7 @@ const handleDismissPermanently = () => {
 
 // 打开安全配置文档
 const openSecurityDocs = () => {
-  window.open("https://www.gpt-load.com/docs/configuration/security", "_blank");
+  window.open("https://github.com/zhangtyzzz/gpt-load/blob/main/SECURITY.md", "_blank");
 };
 </script>
 

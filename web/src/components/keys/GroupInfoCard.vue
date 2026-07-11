@@ -12,18 +12,22 @@ import { copy } from "@/utils/clipboard";
 import { getGroupDisplayName, maskProxyKeys } from "@/utils/display";
 import { CopyOutline, EyeOffOutline, EyeOutline, Pencil, Trash } from "@vicons/ionicons5";
 import {
+  NAlert,
   NButton,
   NButtonGroup,
   NCard,
   NCollapse,
   NCollapseItem,
+  NDivider,
   NForm,
   NFormItem,
   NGrid,
   NGridItem,
+  NGradientText,
   NIcon,
   NInput,
   NSpin,
+  NStatistic,
   NTag,
   NTooltip,
   useDialog,
@@ -55,6 +59,7 @@ const emit = defineEmits<Emits>();
 
 const stats = ref<GroupStatsResponse | null>(null);
 const loading = ref(false);
+const statsLoadError = ref(false);
 const dialog = useDialog();
 const showEditModal = ref(false);
 const showCopyModal = ref(false);
@@ -65,6 +70,8 @@ const expandedName = ref<string[]>([]);
 const configOptions = ref<GroupConfigOption[]>([]);
 const showProxyKeys = ref(false);
 const parentAggregateGroups = ref<ParentAggregateGroup[]>([]);
+let latestStatsRequest = 0;
+let latestParentGroupsRequest = 0;
 
 const proxyKeysDisplay = computed(() => {
   if (!props.group?.proxy_keys) {
@@ -124,7 +131,7 @@ onMounted(() => {
 });
 
 watch(
-  () => props.group,
+  () => props.group?.id,
   () => {
     resetPage();
     loadStats();
@@ -160,18 +167,30 @@ watch(
 );
 
 async function loadStats() {
-  if (!props.group?.id) {
-    stats.value = null;
+  const groupId = props.group?.id;
+  const requestId = ++latestStatsRequest;
+  stats.value = null;
+  statsLoadError.value = false;
+
+  if (!groupId) {
+    loading.value = false;
     return;
   }
 
   try {
     loading.value = true;
-    if (props.group?.id) {
-      stats.value = await keysApi.getGroupStats(props.group.id);
+    const result = await keysApi.getGroupStats(groupId);
+    if (requestId === latestStatsRequest && props.group?.id === groupId) {
+      stats.value = result;
+    }
+  } catch (_error) {
+    if (requestId === latestStatsRequest && props.group?.id === groupId) {
+      statsLoadError.value = true;
     }
   } finally {
-    loading.value = false;
+    if (requestId === latestStatsRequest && props.group?.id === groupId) {
+      loading.value = false;
+    }
   }
 }
 
@@ -185,17 +204,20 @@ async function loadConfigOptions() {
 }
 
 async function loadParentAggregateGroups() {
+  const requestId = ++latestParentGroupsRequest;
+  parentAggregateGroups.value = [];
   if (!props.group?.id || props.group.group_type === "aggregate") {
-    parentAggregateGroups.value = [];
     return;
   }
 
+  const groupId = props.group.id;
   try {
-    const parentGroups = await keysApi.getParentAggregateGroups(props.group.id);
-    parentAggregateGroups.value = parentGroups || [];
+    const parentGroups = await keysApi.getParentAggregateGroups(groupId);
+    if (requestId === latestParentGroupsRequest && props.group?.id === groupId) {
+      parentAggregateGroups.value = parentGroups || [];
+    }
   } catch (error) {
     console.error("Failed to load parent aggregate groups:", error);
-    parentAggregateGroups.value = [];
   }
 }
 
@@ -267,7 +289,7 @@ async function handleDelete() {
           h("div", null, [
             h("p", null, [
               t("keys.dangerousOperation"),
-              h("strong", { style: { color: "#d03050" } }, props.group?.name),
+              h("strong", { style: { color: "var(--error-color)" } }, props.group?.name),
               t("keys.toConfirmDeletion"),
             ]),
             h(NInput, {
@@ -341,12 +363,19 @@ function resetPage() {
         <div class="card-header">
           <div class="header-left">
             <h3 class="group-title">
-              {{ group ? getGroupDisplayName(group) : t("keys.selectGroup") }}
+              <span class="group-title__name">
+                {{ group ? getGroupDisplayName(group) : t("keys.selectGroup") }}
+              </span>
               <n-tooltip trigger="hover" v-if="group && group.endpoint">
                 <template #trigger>
-                  <code class="group-url" @click="copyUrl(group.endpoint)">
-                    {{ group.endpoint }}
-                  </code>
+                  <button
+                    type="button"
+                    class="group-url"
+                    :aria-label="`${t('keys.clickToCopy')}: ${group.endpoint}`"
+                    @click="copyUrl(group.endpoint)"
+                  >
+                    <code>{{ group.endpoint }}</code>
+                  </button>
                 </template>
                 {{ t("keys.clickToCopy") }}
               </n-tooltip>
@@ -360,6 +389,7 @@ function resetPage() {
               size="small"
               @click="handleCopy"
               :title="t('keys.copyGroup')"
+              :aria-label="t('keys.copyGroup')"
               :disabled="!group"
             >
               <template #icon>
@@ -372,6 +402,8 @@ function resetPage() {
               size="small"
               @click="handleEdit"
               :title="t('keys.editGroup')"
+              :aria-label="t('keys.editGroup')"
+              :disabled="!group"
             >
               <template #icon>
                 <n-icon :component="Pencil" />
@@ -383,6 +415,7 @@ function resetPage() {
               size="small"
               @click="handleDelete"
               :title="t('keys.deleteGroup')"
+              :aria-label="t('keys.deleteGroup')"
               type="error"
               :disabled="!group"
             >
@@ -397,7 +430,20 @@ function resetPage() {
       <n-divider style="margin: 0; margin-bottom: 12px" />
       <!-- 统计摘要区 -->
       <div class="stats-summary">
-        <n-spin :show="loading" size="small">
+        <n-alert
+          v-if="statsLoadError"
+          type="error"
+          :title="t('keys.statsLoadFailed')"
+          class="stats-error"
+        >
+          <div class="stats-error__content">
+            <span>{{ t("keys.statsLoadFailed") }}</span>
+            <n-button size="small" :loading="loading" @click="loadStats">
+              {{ t("common.retry") }}
+            </n-button>
+          </div>
+        </n-alert>
+        <n-spin v-else :show="loading" size="small">
           <n-grid cols="2 s:4" :x-gap="12" :y-gap="12" responsive="screen">
             <n-grid-item span="1">
               <!-- 聚合分组：子分组统计 -->
@@ -578,7 +624,14 @@ function resetPage() {
                           <n-button-group size="small" class="key-actions" v-if="group?.proxy_keys">
                             <n-tooltip trigger="hover">
                               <template #trigger>
-                                <n-button quaternary circle @click="showProxyKeys = !showProxyKeys">
+                                <n-button
+                                  quaternary
+                                  circle
+                                  :aria-label="
+                                    showProxyKeys ? t('keys.hideKeys') : t('keys.showKeys')
+                                  "
+                                  @click="showProxyKeys = !showProxyKeys"
+                                >
                                   <template #icon>
                                     <n-icon
                                       :component="showProxyKeys ? EyeOffOutline : EyeOutline"
@@ -590,7 +643,12 @@ function resetPage() {
                             </n-tooltip>
                             <n-tooltip trigger="hover">
                               <template #trigger>
-                                <n-button quaternary circle @click="copyProxyKeys">
+                                <n-button
+                                  quaternary
+                                  circle
+                                  :aria-label="t('keys.copyKeys')"
+                                  @click="copyProxyKeys"
+                                >
                                   <template #icon>
                                     <n-icon :component="CopyOutline" />
                                   </template>
@@ -794,45 +852,71 @@ function resetPage() {
 
 .group-info-card {
   background: var(--card-bg-solid);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--border-color);
-  animation: fadeInUp 0.2s ease-out;
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--border-color-light);
   box-shadow: var(--shadow-sm);
 }
 
 .card-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-3);
   width: 100%;
 }
 
 .header-left {
-  flex: 1;
+  min-width: 0;
 }
 
 .group-title {
   font-size: 1.2rem;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: -0.015em;
   color: var(--text-primary);
   margin: 0 0 8px 0;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.group-title__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .group-url {
+  min-width: 0;
+  max-width: 100%;
   font-size: 0.8rem;
   color: var(--primary-color);
   margin-left: 8px;
-  font-family: monospace;
-  background: var(--bg-secondary);
-  border-radius: 4px;
+  font: inherit;
+  background: var(--code-bg);
+  border-radius: 7px;
   padding: 2px 6px;
   margin-right: 4px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color-light);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.group-url code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.group-url:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .group-id {
@@ -843,7 +927,39 @@ function resetPage() {
 
 .header-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 8px;
+}
+
+@media (max-width: 640px) {
+  :deep(.n-card-header) {
+    padding: 16px;
+  }
+
+  .card-header {
+    align-items: start;
+    gap: var(--space-2);
+  }
+
+  .group-title {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .group-title__name {
+    width: 100%;
+  }
+
+  .group-url {
+    width: 100%;
+    margin: 0;
+    text-align: start;
+  }
+
+  .header-actions {
+    gap: 2px;
+  }
 }
 
 .stats-summary {
@@ -851,12 +967,20 @@ function resetPage() {
   text-align: center;
 }
 
+.stats-error__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  text-align: start;
+}
+
 .status-cards-container:deep(.n-card) {
   max-width: 160px;
 }
 
 :deep(.status-card-failure .n-card-header__main) {
-  color: var(--error-color, #d03050);
+  color: var(--error-color);
 }
 
 .status-title {
@@ -886,7 +1010,7 @@ function resetPage() {
   color: var(--text-primary);
   margin: 0 0 12px 0;
   padding-bottom: 8px;
-  border-bottom: 2px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color-light);
 }
 
 .upstream-url {
@@ -901,24 +1025,14 @@ function resetPage() {
 }
 
 .config-json {
-  background: var(--bg-secondary);
+  background: var(--code-bg);
+  border: 1px solid var(--border-color-light);
   border-radius: var(--border-radius-sm);
   padding: 12px;
   font-size: 0.8rem;
   color: var(--text-primary);
   margin: 8px 0;
   overflow-x: auto;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 :deep(.n-form-item-feedback-wrapper) {
@@ -1018,7 +1132,8 @@ function resetPage() {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: var(--bg-secondary);
+  background: var(--code-bg);
+  border: 1px solid var(--border-color-light);
   border-radius: var(--border-radius-sm);
   padding: 8px;
 }
@@ -1045,7 +1160,7 @@ function resetPage() {
 }
 
 .header-removed {
-  color: var(--error-color, #dc2626);
+  color: var(--error-color);
   font-style: italic;
   font-size: 0.8rem;
 }

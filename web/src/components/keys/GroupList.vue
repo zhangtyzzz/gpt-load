@@ -3,7 +3,7 @@ import { keysApi } from "@/api/keys";
 import type { Group } from "@/types/models";
 import { getGroupDisplayName } from "@/utils/display";
 import { Add, LinkOutline, Search } from "@vicons/ionicons5";
-import { NButton, NCard, NEmpty, NInput, NSpin, NTag } from "naive-ui";
+import { NButton, NCard, NEmpty, NIcon, NInput, NSpin, NTag } from "naive-ui";
 import { computed, onBeforeUpdate, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import AggregateGroupModal from "./AggregateGroupModal.vue";
@@ -49,24 +49,11 @@ const isTouchDevice = computed(() => {
 
 const hasSearchFilter = computed(() => Boolean(searchText.value.trim()));
 
-const canDrag = computed(
-  () =>
-    !props.loading &&
-    !savingOrder.value &&
-    !hasSearchFilter.value &&
-    !isTouchDevice.value &&
-    displayGroups.value.length > 1
+const dragAvailable = computed(
+  () => !hasSearchFilter.value && !isTouchDevice.value && displayGroups.value.length > 1
 );
 
-const dragDisabledHint = computed(() => {
-  if (hasSearchFilter.value) {
-    return t("keys.dragSortHint");
-  }
-  if (isTouchDevice.value) {
-    return t("keys.dragSortTouchDisabled");
-  }
-  return "";
-});
+const canDrag = computed(() => !props.loading && !savingOrder.value && dragAvailable.value);
 
 watch(
   () => props.groups,
@@ -112,7 +99,9 @@ watch(
     const element = groupItemRefs.value.get(id);
     if (element) {
       element.scrollIntoView({
-        behavior: "smooth", // 平滑滚动
+        behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
         block: "nearest", // 将元素滚动到最近的边缘
       });
     }
@@ -333,6 +322,35 @@ function handleDragEnd() {
     suspendAutoScroll.value = false;
   }
 }
+
+async function handleKeyboardReorder(groupId: number | undefined, direction: -1 | 1) {
+  if (!canDrag.value || !groupId) {
+    return;
+  }
+
+  const sourceIndex = displayGroups.value.findIndex(group => group.id === groupId);
+  const targetIndex = sourceIndex + direction;
+  if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= displayGroups.value.length) {
+    return;
+  }
+
+  const targetGroupId = displayGroups.value[targetIndex].id;
+  if (!targetGroupId) {
+    return;
+  }
+
+  const previousOrder = displayGroups.value.map(group => ({ ...group }));
+  suspendAutoScroll.value = true;
+  const changed = reorderInMemory(groupId, targetGroupId, direction < 0 ? "before" : "after");
+  if (!changed) {
+    suspendAutoScroll.value = false;
+    return;
+  }
+
+  await persistGroupOrder(previousOrder);
+}
+
+defineExpose({ openCreateGroupModal });
 </script>
 
 <template>
@@ -361,8 +379,8 @@ function handleDragEnd() {
               :description="searchText ? t('keys.noMatchingGroups') : t('keys.noGroups')"
             />
           </div>
-          <div v-else class="groups-list">
-            <div
+          <ul v-else class="groups-list" :aria-busy="savingOrder">
+            <li
               v-for="group in filteredGroups"
               :key="group.id"
               class="group-item"
@@ -379,7 +397,6 @@ function handleDragEnd() {
                   dropTarget?.position === 'after' &&
                   draggingGroupId !== group.id,
               }"
-              @click="handleGroupClick(group)"
               @dragover="handleDragOver($event, group.id)"
               @drop="handleDrop($event, group.id)"
               :ref="
@@ -388,15 +405,18 @@ function handleDragEnd() {
                 }
               "
             >
-              <div
+              <button
+                v-if="dragAvailable"
+                type="button"
                 class="group-icon"
-                :class="{ 'drag-disabled': !canDrag }"
+                :disabled="!canDrag"
                 :draggable="canDrag"
-                :role="'button'"
-                :aria-label="t('keys.dragHandle')"
-                :aria-describedby="dragDisabledHint ? `drag-hint-${group.id}` : undefined"
+                :aria-label="`${t('keys.dragHandle')}: ↑ / ↓`"
+                @click.stop
                 @dragstart="handleDragStart($event, group.id)"
                 @dragend="handleDragEnd"
+                @keydown.up.stop.prevent="handleKeyboardReorder(group.id, -1)"
+                @keydown.down.stop.prevent="handleKeyboardReorder(group.id, 1)"
               >
                 <span v-if="group.group_type === 'aggregate'">🔗</span>
                 <span v-else-if="group.channel_type === 'openai'">🤖</span>
@@ -404,38 +424,50 @@ function handleDragEnd() {
                 <span v-else-if="group.channel_type === 'gemini'">💎</span>
                 <span v-else-if="group.channel_type === 'anthropic'">🧠</span>
                 <span v-else>🔧</span>
+              </button>
+              <div v-else class="group-icon" aria-hidden="true">
+                <span v-if="group.group_type === 'aggregate'">🔗</span>
+                <span v-else-if="group.channel_type === 'openai'">🤖</span>
+                <span v-else-if="group.channel_type === 'openai-response'">🔁</span>
+                <span v-else-if="group.channel_type === 'gemini'">💎</span>
+                <span v-else-if="group.channel_type === 'anthropic'">🧠</span>
+                <span v-else>🔧</span>
               </div>
-              <div class="group-content">
-                <div class="group-name">{{ getGroupDisplayName(group) }}</div>
-                <div class="group-meta">
-                  <n-tag size="tiny" :type="getChannelTagType(group.channel_type)">
-                    {{ group.channel_type }}
-                  </n-tag>
-                  <n-tag v-if="group.group_type === 'aggregate'" size="tiny" type="warning" round>
-                    {{ t("keys.aggregateGroup") }}
-                  </n-tag>
-                  <span v-if="group.group_type !== 'aggregate'" class="group-id">
-                    #{{ group.name }}
-                  </span>
+              <button
+                type="button"
+                class="group-select-control"
+                :aria-pressed="selectedGroup?.id === group.id"
+                @click="handleGroupClick(group)"
+              >
+                <div class="group-content">
+                  <div class="group-name">{{ getGroupDisplayName(group) }}</div>
+                  <div class="group-meta">
+                    <n-tag size="tiny" :type="getChannelTagType(group.channel_type)">
+                      {{ group.channel_type }}
+                    </n-tag>
+                    <n-tag v-if="group.group_type === 'aggregate'" size="tiny" type="warning" round>
+                      {{ t("keys.aggregateGroup") }}
+                    </n-tag>
+                    <span v-if="group.group_type !== 'aggregate'" class="group-id">
+                      #{{ group.name }}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <span v-if="dragDisabledHint" :id="`drag-hint-${group.id}`" class="sr-only">
-                {{ dragDisabledHint }}
-              </span>
-            </div>
-          </div>
+              </button>
+            </li>
+          </ul>
         </n-spin>
       </div>
 
       <!-- 添加分组按钮 -->
       <div class="add-section">
-        <n-button type="success" size="small" block @click="openCreateGroupModal">
+        <n-button type="primary" size="small" block @click="openCreateGroupModal">
           <template #icon>
             <n-icon :component="Add" />
           </template>
           {{ t("keys.createGroup") }}
         </n-button>
-        <n-button type="info" size="small" block @click="openCreateAggregateGroupModal">
+        <n-button secondary size="small" block @click="openCreateAggregateGroupModal">
           <template #icon>
             <n-icon :component="LinkOutline" />
           </template>
@@ -457,225 +489,206 @@ function handleDragEnd() {
   height: 100%;
 }
 
-.groups-section::-webkit-scrollbar {
-  width: 1px;
-  height: 1px;
-}
-
-.group-list-container {
+.group-list-container,
+.group-list-card {
   height: 100%;
 }
 
 .group-list-card {
-  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--card-bg-solid);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .group-list-card:hover {
+  box-shadow: var(--shadow-sm);
   transform: none;
-  box-shadow: var(--shadow-lg);
 }
 
 .search-section {
-  height: 41px;
+  min-height: 41px;
 }
 
 .groups-section {
   flex: 1;
-  height: calc(100% - 120px);
+  min-height: 0;
   overflow: auto;
 }
 
 .empty-container {
-  padding: 20px 0;
+  padding: var(--space-5) 0;
 }
 
 .groups-list {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 100%;
-  overflow-y: auto;
   width: 100%;
+  max-height: 100%;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
 }
 
-.group-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid var(--border-color);
-  font-size: 12px;
-  color: var(--text-primary);
-  background: transparent;
-  box-sizing: border-box;
+.group-item,
+.group-item.aggregate {
   position: relative;
+  display: flex;
+  box-sizing: border-box;
+  min-height: 50px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.375rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.group-item:hover,
+.group-item.aggregate:hover,
+:root.dark .group-item:hover,
+:root.dark .group-item.aggregate:hover {
+  border-color: transparent;
+  background: var(--hover-bg);
 }
 
 .group-item.dragging {
-  opacity: 0.6;
+  opacity: 0.58;
 }
 
 .group-item.drop-before::before,
 .group-item.drop-after::after {
-  content: "";
   position: absolute;
-  left: 8px;
-  right: 8px;
+  right: var(--space-2);
+  left: var(--space-2);
+  z-index: 1;
   height: 3px;
-  border-radius: 3px;
+  border-radius: 999px;
   background: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+  box-shadow: 0 0 0 2px var(--primary-color-suppl);
+  content: "";
   pointer-events: none;
 }
 
 .group-item.drop-before::before {
-  top: -4px;
+  top: -3px;
 }
 
 .group-item.drop-after::after {
-  bottom: -4px;
-}
-
-:root.dark .group-item.drop-before::before,
-:root.dark .group-item.drop-after::after {
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
-}
-
-/* 聚合分组样式 */
-.group-item.aggregate {
-  border-style: dashed;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.02) 0%, rgba(102, 126, 234, 0.05) 100%);
-}
-
-:root.dark .group-item.aggregate {
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(102, 126, 234, 0.1) 100%);
-  border-color: rgba(102, 126, 234, 0.2);
-}
-
-.group-item:hover,
-.group-item.aggregate:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--primary-color);
-}
-
-.group-item.aggregate:hover {
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(102, 126, 234, 0.1) 100%);
-  border-style: dashed;
-}
-
-:root.dark .group-item:hover {
-  background: rgba(102, 126, 234, 0.1);
-  border-color: rgba(102, 126, 234, 0.3);
-}
-
-:root.dark .group-item.aggregate:hover {
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(102, 126, 234, 0.15) 100%);
-  border-color: rgba(102, 126, 234, 0.4);
-}
-
-.group-item.aggregate.active {
-  background: var(--primary-gradient);
-  border-style: solid;
+  bottom: -3px;
 }
 
 .group-item.active,
+.group-item.aggregate.active,
 :root.dark .group-item.active,
 :root.dark .group-item.aggregate.active {
-  background: var(--primary-gradient);
-  color: white;
   border-color: transparent;
-  box-shadow: var(--shadow-md);
-  border-style: solid;
+  background: var(--primary-color);
+  box-shadow: none;
+  color: white;
 }
 
 .group-icon {
-  font-size: 16px;
-  width: 28px;
-  height: 28px;
   display: flex;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary);
-  border-radius: 6px;
-  flex-shrink: 0;
   box-sizing: border-box;
-  cursor: grab;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
   user-select: none;
 }
 
-.group-item.active .group-icon {
-  background: rgba(255, 255, 255, 0.2);
+button.group-icon {
+  cursor: grab;
 }
 
-.group-item.dragging .group-icon {
+button.group-icon:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+button.group-icon:active,
+.group-item.dragging button.group-icon {
   cursor: grabbing;
 }
 
-.group-icon.drag-disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
+.group-select-control {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  flex: 1;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .group-content {
-  flex: 1;
   min-width: 0;
+  flex: 1;
 }
 
 .group-name {
-  font-weight: 600;
-  font-size: 14px;
-  line-height: 1.2;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .group-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 10px;
-  flex-wrap: wrap;
 }
 
 .group-id {
-  opacity: 0.8;
   color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.group-item.active .group-icon {
+  background: color-mix(in srgb, white 20%, transparent);
 }
 
 .group-item.active .group-id {
-  opacity: 0.9;
   color: white;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  opacity: 0.9;
 }
 
 .add-section {
-  border-top: 1px solid var(--border-color);
-  padding-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-color-light);
 }
 
-/* 滚动条样式 */
 .groups-list::-webkit-scrollbar {
   width: 4px;
 }
@@ -685,39 +698,28 @@ function handleDragEnd() {
 }
 
 .groups-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
   background: var(--scrollbar-bg);
-  border-radius: 2px;
 }
 
-.groups-list::-webkit-scrollbar-thumb:hover {
-  background: var(--border-color);
-}
+@media (max-width: 768px) {
+  .group-item {
+    min-height: 56px;
+  }
 
-/* 暗黑模式特殊样式 */
-:root.dark .group-item {
-  border-color: rgba(255, 255, 255, 0.05);
-}
+  .group-icon,
+  .group-select-control {
+    min-height: 44px;
+  }
 
-:root.dark .group-icon {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
+  .group-icon {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
 
-:root.dark .search-section :deep(.n-input) {
-  --n-border: 1px solid rgba(255, 255, 255, 0.08);
-  --n-border-hover: 1px solid rgba(102, 126, 234, 0.4);
-  --n-border-focus: 1px solid var(--primary-color);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-/* 标签样式优化 */
-:root.dark .group-meta :deep(.n-tag) {
-  background: rgba(102, 126, 234, 0.15);
-  border: 1px solid rgba(102, 126, 234, 0.3);
-}
-
-:root.dark .group-item.active .group-meta :deep(.n-tag) {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
+  .add-section :deep(.n-button) {
+    min-height: 44px;
+  }
 }
 </style>

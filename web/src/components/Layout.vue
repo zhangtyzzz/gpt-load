@@ -5,35 +5,41 @@ import LanguageSelector from "@/components/LanguageSelector.vue";
 import Logout from "@/components/Logout.vue";
 import NavBar from "@/components/NavBar.vue";
 import ThemeToggle from "@/components/ThemeToggle.vue";
+import { MenuOutline } from "@vicons/ionicons5";
 import { useMediaQuery } from "@vueuse/core";
-import { ref, watch } from "vue";
+import { NButton, NDrawer, NDrawerContent, NIcon, NLayout, NLayoutContent } from "naive-ui";
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
+const { t } = useI18n();
 const isMenuOpen = ref(false);
-const isMobile = useMediaQuery("(max-width: 768px)");
+const isMobile = useMediaQuery("(max-width: 820px)");
+const drawerWidth = computed(() => Math.min(340, globalThis.innerWidth));
 
 watch(isMobile, value => {
   if (!value) {
     isMenuOpen.value = false;
   }
 });
-
-const toggleMenu = () => {
-  isMenuOpen.value = !isMenuOpen.value;
-};
 </script>
 
 <template>
   <n-layout class="main-layout">
-    <n-layout-header class="layout-header">
-      <div class="header-content">
-        <div class="header-brand">
-          <div class="brand-icon">
-            <img src="@/assets/logo.png" alt="" />
-          </div>
-          <h1 v-if="!isMobile" class="brand-title">GPT Load</h1>
-        </div>
+    <a class="skip-link" href="#main-content">{{ t("common.skipToContent") }}</a>
 
-        <nav v-if="!isMobile" class="header-nav">
+    <header class="layout-header material-chrome">
+      <div class="header-content">
+        <router-link class="header-brand interactive" :to="{ name: 'dashboard' }">
+          <span class="brand-icon" aria-hidden="true">
+            <img src="@/assets/logo-256.png" alt="" />
+          </span>
+          <span class="brand-copy">
+            <strong>GPT Load</strong>
+            <small>{{ t("common.console") }}</small>
+          </span>
+        </router-link>
+
+        <nav v-if="!isMobile" class="header-nav" :aria-label="t('common.primaryNavigation')">
           <nav-bar />
         </nav>
 
@@ -41,30 +47,35 @@ const toggleMenu = () => {
           <language-selector />
           <theme-toggle />
           <logout v-if="!isMobile" />
-          <n-button v-if="isMobile" text @click="toggleMenu">
-            <svg viewBox="0 0 24 24" width="24" height="24">
-              <path fill="currentColor" d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z" />
-            </svg>
+          <n-button
+            v-if="isMobile"
+            quaternary
+            circle
+            :aria-label="t('common.openNavigation')"
+            @click="isMenuOpen = true"
+          >
+            <template #icon><n-icon :component="MenuOutline" /></template>
           </n-button>
         </div>
       </div>
-    </n-layout-header>
+    </header>
 
-    <n-drawer v-model:show="isMenuOpen" :width="260" placement="right">
+    <n-drawer v-model:show="isMenuOpen" :width="drawerWidth" placement="right">
       <n-drawer-content
-        title="GPT Load"
-        body-content-style="padding: 0; display: flex; flex-direction: column; height: 100%;"
+        :title="t('common.navigation')"
+        closable
+        body-content-style="padding: 12px; display: flex; flex-direction: column; height: 100%;"
       >
-        <div style="flex: 1; overflow-y: auto">
+        <nav :aria-label="t('common.primaryNavigation')">
           <nav-bar mode="vertical" @close="isMenuOpen = false" />
-        </div>
+        </nav>
         <div class="mobile-actions">
           <logout />
         </div>
       </n-drawer-content>
     </n-drawer>
 
-    <n-layout-content class="layout-content">
+    <n-layout-content id="main-content" class="layout-content" tabindex="-1">
       <div class="content-wrapper">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -73,131 +84,171 @@ const toggleMenu = () => {
         </router-view>
       </div>
     </n-layout-content>
+
     <app-footer />
   </n-layout>
 
-  <!-- 全局任务进度条 -->
   <global-task-progress-bar />
 </template>
 
 <style scoped>
 .main-layout {
-  background: transparent;
-  min-height: 100vh;
   display: flex;
+  min-height: 100vh;
   flex-direction: column;
+  background: transparent;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 1000;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.625rem;
+  background: var(--card-bg-solid);
+  box-shadow: var(--shadow-md);
+  color: var(--primary-color);
+  font-weight: 650;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 .layout-header {
-  background: var(--header-bg);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-color-light);
-  box-shadow: var(--shadow-sm);
   position: sticky;
   top: 0;
   z-index: 100;
-  padding: 0 12px;
+  border-width: 0 0 1px;
 }
 
 .header-content {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 0;
-  overflow-x: auto;
-  max-width: 1200px;
+  display: grid;
+  width: min(100%, 1440px);
+  min-height: 64px;
+  padding: 0 1.5rem;
   margin: 0 auto;
-  position: relative;
-}
-
-.header-nav {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1;
+  align-items: center;
+  grid-template-columns: minmax(12rem, 1fr) auto minmax(12rem, 1fr);
 }
 
 .header-brand {
-  display: flex;
+  display: inline-flex;
+  width: fit-content;
+  min-width: 0;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  z-index: 2;
+  gap: 0.625rem;
+  border-radius: 0.75rem;
+  color: var(--text-primary);
+  text-decoration: none;
 }
 
 .brand-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 35px;
-  height: 35px;
-  img {
-    height: 100%;
-    width: 100%;
-  }
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--border-color-light);
+  border-radius: 0.7rem;
+  background: var(--card-bg-solid);
+  box-shadow: var(--shadow-sm);
 }
 
-.brand-title {
-  font-size: 1.4rem;
+.brand-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.brand-copy {
+  display: grid;
+  line-height: 1.05;
+}
+
+.brand-copy strong {
+  font-size: 0.96rem;
   font-weight: 700;
-  background: var(--primary-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin: 0;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.015em;
+}
+
+.brand-copy small {
+  margin-top: 0.25rem;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.header-nav {
+  justify-self: center;
 }
 
 .header-actions {
-  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  z-index: 2;
+  justify-self: end;
+  gap: 0.25rem;
 }
 
 .mobile-actions {
-  padding: 16px;
-  border-top: 1px solid var(--border-color-light);
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
+  padding-top: 1rem;
   margin-top: auto;
+  border-top: 1px solid var(--border-color-light);
 }
 
 .layout-content {
-  flex: 1;
-  overflow: auto;
-  background: transparent;
-  max-width: 1200px;
-  margin: 0 auto;
   width: 100%;
+  max-width: 1440px;
+  flex: 1;
+  margin: 0 auto;
+  background: transparent;
 }
 
 .content-wrapper {
-  padding: 16px;
-  min-height: calc(100vh - 111px);
+  min-height: calc(100vh - 116px);
+  padding: 1.75rem 1.5rem 2.5rem;
 }
 
-.layout-footer {
-  background: transparent;
-  padding: 0;
-}
-
-/* Mobile specific styles */
-@media (max-width: 768px) {
-  .header-nav {
-    position: static;
-    transform: none;
-  }
-
+@media (max-width: 820px) {
   .header-content {
-    overflow-x: visible;
+    min-height: 58px;
+    padding: 0 1rem;
+    grid-template-columns: 1fr auto;
   }
 
-  .mobile-actions > :deep(*) {
-    width: 100%;
+  .brand-copy small {
+    display: none;
+  }
+
+  .content-wrapper {
+    min-height: calc(100vh - 106px);
+    padding: 1.25rem 1rem 2rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .header-content {
+    padding: 0 0.75rem;
+  }
+
+  .brand-copy {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 0;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .layout-header {
+    background: var(--card-bg-solid);
+    backdrop-filter: none;
   }
 }
 </style>

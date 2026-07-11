@@ -2,7 +2,7 @@
 import { keysApi } from "@/api/keys";
 import { appState } from "@/utils/app-state";
 import { Close, CloudUploadOutline } from "@vicons/ionicons5";
-import { NButton, NCard, NInput, NModal, NUpload, type UploadFileInfo } from "naive-ui";
+import { NButton, NCard, NIcon, NInput, NModal, NUpload, type UploadFileInfo } from "naive-ui";
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -123,7 +123,7 @@ function isSubmitDisabled() {
 <template>
   <n-modal :show="show" @update:show="handleClose" class="form-modal">
     <n-card
-      style="width: 800px"
+      class="form-modal-card"
       :title="t('keys.addKeysToGroup', { group: groupName || t('keys.currentGroup') })"
       :bordered="false"
       size="huge"
@@ -131,7 +131,7 @@ function isSubmitDisabled() {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -145,7 +145,7 @@ function isSubmitDisabled() {
         type="textarea"
         :placeholder="t('keys.enterKeysPlaceholder')"
         :rows="8"
-        style="margin-top: 20px"
+        class="modal-input"
       />
 
       <!-- 文件上传模式 -->
@@ -156,21 +156,21 @@ function isSubmitDisabled() {
         accept=".txt"
         :before-upload="beforeUpload"
         @change="handleFileChange"
-        style="margin-top: 20px"
+        class="modal-upload"
       >
         <div class="upload-area">
-          <n-icon size="48" :component="CloudUploadOutline" style="color: #18a058" />
+          <n-icon size="48" :component="CloudUploadOutline" class="upload-icon" />
           <div class="upload-text">{{ t("keys.clickOrDragFile") }}</div>
           <div class="upload-hint">{{ t("keys.onlyTxtFileSupported") }}</div>
         </div>
       </n-upload>
 
       <template #footer>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="modal-footer">
           <n-button @click="toggleInputMode" secondary>
             {{ inputMode === "text" ? t("keys.uploadFile") : t("keys.manualInput") }}
           </n-button>
-          <div style="display: flex; gap: 12px">
+          <div class="footer-actions">
             <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
             <n-button
               type="primary"
@@ -188,56 +188,124 @@ function isSubmitDisabled() {
 </template>
 
 <style scoped>
-.form-modal {
-  --n-color: rgba(255, 255, 255, 0.95);
+.form-modal-card {
+  display: flex;
+  width: min(800px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
 }
 
 :deep(.n-input) {
-  --n-border-radius: 6px;
+  --n-border-radius: var(--border-radius-sm);
 }
 
 :deep(.n-card-header) {
-  border-bottom: 1px solid rgba(239, 239, 245, 0.8);
-  padding: 10px 20px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-color-light);
 }
 
 :deep(.n-card__content) {
-  max-height: calc(100vh - 68px - 61px - 50px);
+  min-height: 0;
   overflow-y: auto;
 }
 
 :deep(.n-card__footer) {
-  border-top: 1px solid rgba(239, 239, 245, 0.8);
-  padding: 10px 15px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color-light);
+}
+
+.modal-input,
+.modal-upload {
+  margin-top: var(--space-5);
 }
 
 .upload-area {
   display: flex;
+  min-height: 15rem;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  border: 2px dashed #d9d9d9;
-  border-radius: 6px;
-  background-color: #fafafa;
+  padding: var(--space-10);
+  border: 2px dashed var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--bg-secondary);
   cursor: pointer;
-  transition: all 0.3s;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
 }
 
 .upload-area:hover {
-  border-color: #18a058;
-  background-color: #f0f9f4;
+  border-color: var(--success-color);
+  background: var(--success-bg);
+}
+
+.upload-icon {
+  color: var(--success-color);
 }
 
 .upload-text {
-  margin-top: 12px;
+  margin-top: var(--space-3);
+  color: var(--text-primary);
   font-size: 16px;
-  color: #333;
 }
 
 .upload-hint {
-  margin-top: 8px;
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
   font-size: 14px;
-  color: #999;
+}
+
+.modal-footer,
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.modal-footer {
+  justify-content: space-between;
+}
+
+@media (max-width: 768px) {
+  .form-modal-card {
+    width: min(800px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
+  }
+
+  :deep(.n-card-header),
+  :deep(.n-card__content),
+  :deep(.n-card__footer) {
+    padding-inline: var(--space-3);
+  }
+
+  .upload-area {
+    min-height: 11rem;
+    padding: var(--space-6) var(--space-3);
+  }
+
+  .modal-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modal-footer > :deep(.n-button),
+  .footer-actions :deep(.n-button) {
+    min-height: 44px;
+  }
+
+  .footer-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-area {
+    transition: none;
+  }
 }
 </style>

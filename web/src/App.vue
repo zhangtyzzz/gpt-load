@@ -13,6 +13,6 @@ import GlobalProviders from "@/components/GlobalProviders.vue";
 <style>
 #app-root {
   width: 100%;
-  overflow: hidden;
+  min-height: 100vh;
 }
 </style>

@@ -179,7 +179,7 @@ async function handleSubmit() {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -248,7 +248,7 @@ async function handleSubmit() {
       </n-form>
 
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 12px">
+        <div class="modal-footer">
           <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
           <n-button type="primary" @click="handleSubmit" :loading="loading">
             {{ group ? t("common.update") : t("common.create") }}
@@ -260,12 +260,26 @@ async function handleSubmit() {
 </template>
 
 <style scoped>
-.aggregate-group-modal {
-  width: 600px;
+.aggregate-group-card {
+  display: flex;
+  width: min(600px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.aggregate-group-card :deep(.n-card-header),
+.aggregate-group-card :deep(.n-card__footer) {
+  flex-shrink: 0;
+}
+
+.aggregate-group-card :deep(.n-card__content) {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .form-section {
-  margin-top: 20px;
+  margin-top: var(--space-5);
 }
 
 .form-section:first-child {
@@ -273,11 +287,39 @@ async function handleSubmit() {
 }
 
 .section-title {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-color-light);
+  color: var(--text-primary);
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 768px) {
+  .aggregate-group-card {
+    width: min(600px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .aggregate-group-card :deep(.n-card-header),
+  .aggregate-group-card :deep(.n-card__content),
+  .aggregate-group-card :deep(.n-card__footer) {
+    padding-inline: var(--space-3);
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-footer :deep(.n-button) {
+    min-height: 44px;
+  }
 }
 </style>

@@ -223,7 +223,7 @@ const canAddMore = computed(() => {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -283,6 +283,7 @@ const canAddMore = computed(() => {
                 circle
                 size="small"
                 class="item-delete"
+                :aria-label="t('common.delete')"
                 :style="{ visibility: formData.sub_groups.length > 1 ? 'visible' : 'hidden' }"
               >
                 <template #icon>
@@ -307,7 +308,7 @@ const canAddMore = computed(() => {
       </n-form>
 
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 12px">
+        <div class="modal-footer">
           <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
           <n-button type="primary" @click="handleSubmit" :loading="loading">
             {{ t("common.confirm") }}
@@ -319,8 +320,22 @@ const canAddMore = computed(() => {
 </template>
 
 <style scoped>
-.add-sub-group-modal {
-  width: 700px;
+.add-sub-group-card {
+  display: flex;
+  width: min(700px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.add-sub-group-card :deep(.n-card-header),
+.add-sub-group-card :deep(.n-card__footer) {
+  flex-shrink: 0;
+}
+
+.add-sub-group-card :deep(.n-card__content) {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .form-section {
@@ -395,10 +410,17 @@ const canAddMore = computed(() => {
   border-radius: var(--border-radius-sm);
 }
 
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
 /* 响应式适配 */
 @media (max-width: 768px) {
-  .add-sub-group-modal {
-    width: 90vw;
+  .add-sub-group-card {
+    width: min(700px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
   }
 
   .sub-group-item {
@@ -420,6 +442,17 @@ const canAddMore = computed(() => {
 
   .item-delete {
     align-self: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-footer :deep(.n-button) {
+    min-height: 44px;
   }
 }
 

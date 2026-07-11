@@ -5,17 +5,17 @@
   "description": "GPT Load Balancer Frontend - A modern Vue 3 frontend for GPT load balancing service",
   "type": "module",
   "keywords": ["vue3", "typescript", "vite", "naive-ui", "gpt-load", "frontend"],
-  "author": "tbphp",
+  "author": "zhangtyzzz",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tbphp/gpt-load.git",
+    "url": "https://github.com/zhangtyzzz/gpt-load.git",
     "directory": "web"
   },
   "bugs": {
-    "url": "https://github.com/tbphp/gpt-load/issues"
+    "url": "https://github.com/zhangtyzzz/gpt-load/issues"
   },
-  "homepage": "https://github.com/tbphp/gpt-load#readme",
+  "homepage": "https://github.com/zhangtyzzz/gpt-load#readme",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -26,9 +26,9 @@
     "format:check": "prettier --check .",
     "type-check": "vue-tsc --build --force",
     "clean": "rm -rf dist node_modules/.vite",
-    "test:unit": "echo 'No tests specified' && exit 0",
+    "test:unit": "vitest run",
     "prepare": "echo 'Prepare script for potential Git hooks'",
-    "check-all": "npm lint:check && npm format:check && npm type-check"
+    "check-all": "npm run lint:check && npm run format:check && npm run type-check && npm run test:unit"
   },
   "dependencies": {
     "@vicons/ionicons5": "^0.13.0",
@@ -47,13 +47,16 @@
     "@vitejs/plugin-vue": "^5.2.4",
     "@vue/eslint-config-prettier": "^10.0.0",
     "@vue/eslint-config-typescript": "^14.0.0",
+    "@vue/test-utils": "^2.4.11",
     "@vue/tsconfig": "^0.7.0",
     "eslint": "^9.30.1",
     "eslint-plugin-prettier": "^5.5.1",
     "eslint-plugin-vue": "^9.0.0",
+    "happy-dom": "^20.10.6",
     "prettier": "^3.6.2",
     "typescript": "~5.8.3",
     "vite": "^6.4.1",
+    "vitest": "^4.1.6",
     "vue-tsc": "^2.2.8"
   }
 }

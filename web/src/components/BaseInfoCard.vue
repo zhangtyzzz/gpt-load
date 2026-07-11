@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DashboardStatsResponse } from "@/types/models";
 import { NCard, NGrid, NGridItem, NSpace, NTag, NTooltip } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -9,12 +9,9 @@ const { t } = useI18n();
 // Props
 interface Props {
   stats: DashboardStatsResponse | null;
-  loading?: boolean;
 }
 
-const props = withDefaults(defineProps<Props>(), {
-  loading: false,
-});
+const props = defineProps<Props>();
 
 // 使用计算属性代替ref
 const stats = computed(() => props.stats);
@@ -37,26 +34,22 @@ const formatTrend = (trend: number): string => {
   return `${sign}${trend.toFixed(1)}%`;
 };
 
-// 监听stats变化并更新动画值
 const updateAnimatedValues = () => {
   if (stats.value) {
-    setTimeout(() => {
-      animatedValues.value = {
-        key_count:
-          (stats.value?.key_count?.value ?? 0) /
-          ((stats.value?.key_count?.value ?? 1) + (stats.value?.key_count?.sub_value ?? 1)),
-        rpm: Math.min(100 + (stats.value?.rpm?.trend ?? 0), 100) / 100,
-        request_count: Math.min(100 + (stats.value?.request_count?.trend ?? 0), 100) / 100,
-        error_rate: (100 - (stats.value?.error_rate?.value ?? 0)) / 100,
-      };
-    }, 0);
+    const totalKeys = (stats.value.key_count?.value ?? 0) + (stats.value.key_count?.sub_value ?? 0);
+    animatedValues.value = {
+      key_count: totalKeys > 0 ? (stats.value.key_count?.value ?? 0) / totalKeys : 0,
+      rpm: Math.min(Math.max(100 + (stats.value.rpm?.trend ?? 0), 0), 100) / 100,
+      request_count:
+        Math.min(Math.max(100 + (stats.value.request_count?.trend ?? 0), 0), 100) / 100,
+      error_rate: Math.min(Math.max(100 - (stats.value.error_rate?.value ?? 0), 0), 100) / 100,
+    };
+  } else {
+    animatedValues.value = {};
   }
 };
 
-// 监听stats变化
-onMounted(() => {
-  updateAnimatedValues();
-});
+watch(stats, updateAnimatedValues, { immediate: true });
 </script>
 
 <template>
@@ -65,7 +58,7 @@ onMounted(() => {
       <n-grid cols="2 s:4" :x-gap="20" :y-gap="20" responsive="screen">
         <!-- 密钥数量 -->
         <n-grid-item span="1">
-          <n-card :bordered="false" class="stat-card" style="animation-delay: 0s">
+          <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
               <div class="stat-icon key-icon">🔑</div>
               <n-tooltip v-if="stats?.key_count.sub_value" trigger="hover">
@@ -98,7 +91,7 @@ onMounted(() => {
 
         <!-- RPM (10分钟) -->
         <n-grid-item span="1">
-          <n-card :bordered="false" class="stat-card" style="animation-delay: 0.05s">
+          <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
               <div class="stat-icon rpm-icon">⏱️</div>
               <n-tag
@@ -131,7 +124,7 @@ onMounted(() => {
 
         <!-- 24小时请求 -->
         <n-grid-item span="1">
-          <n-card :bordered="false" class="stat-card" style="animation-delay: 0.1s">
+          <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
               <div class="stat-icon request-icon">📈</div>
               <n-tag
@@ -164,7 +157,7 @@ onMounted(() => {
 
         <!-- 24小时错误率 -->
         <n-grid-item span="1">
-          <n-card :bordered="false" class="stat-card" style="animation-delay: 0.15s">
+          <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
               <div class="stat-icon error-icon">🛡️</div>
               <n-tag
@@ -202,23 +195,23 @@ onMounted(() => {
 <style scoped>
 .stats-container {
   width: 100%;
-  animation: fadeInUp 0.2s ease-out;
-  margin-bottom: 16px;
 }
 
 .stat-card {
-  background: var(--card-bg);
+  background: var(--card-bg-solid);
   border-radius: var(--border-radius-lg);
   border: 1px solid var(--border-color-light);
   position: relative;
   overflow: hidden;
-  animation: slideInUp 0.2s ease-out both;
-  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .stat-header {
@@ -236,24 +229,24 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   font-size: 1.4rem;
-  color: white;
-  box-shadow: var(--shadow-md);
+  background: var(--primary-color-suppl);
+  color: var(--primary-color);
 }
 
 .key-icon {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: rgba(0, 113, 227, 0.1);
 }
 
 .rpm-icon {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  background: rgba(255, 159, 10, 0.12);
 }
 
 .request-icon {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  background: rgba(90, 200, 250, 0.14);
 }
 
 .error-icon {
-  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  background: var(--success-bg);
 }
 
 .stat-trend {
@@ -274,11 +267,13 @@ onMounted(() => {
 }
 
 .stat-value {
-  font-size: 2rem;
+  font-size: clamp(1.75rem, 3vw, 2.2rem);
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.08;
   color: var(--text-primary);
   margin-bottom: 4px;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-title {
@@ -299,45 +294,29 @@ onMounted(() => {
 .stat-bar-fill {
   height: 100%;
   border-radius: 2px;
-  transition: width 0.5s ease-out;
-  transition-delay: 0.2s;
+  transition: width 0.4s var(--ease-out);
 }
 
 .key-bar {
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  background: #0071e3;
 }
 
 .rpm-bar {
-  background: linear-gradient(90deg, #f093fb 0%, #f5576c 100%);
+  background: #ff9f0a;
 }
 
 .request-bar {
-  background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+  background: #5ac8fa;
 }
 
 .error-bar {
-  background: linear-gradient(90deg, #43e97b 0%, #38f9d7 100%);
+  background: #248a3d;
 }
 
-@keyframes slideInUp {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+@media (prefers-reduced-motion: reduce) {
+  .stat-card,
+  .stat-bar-fill {
+    transition: none;
   }
 }
 

@@ -8,6 +8,8 @@ import { Add, Close, HelpCircleOutline, Remove } from "@vicons/ionicons5";
 import {
   NButton,
   NCard,
+  NCollapse,
+  NCollapseItem,
   NForm,
   NFormItem,
   NIcon,
@@ -665,7 +667,7 @@ async function handleSubmit() {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -919,6 +921,7 @@ async function handleSubmit() {
                   quaternary
                   circle
                   size="small"
+                  :aria-label="t('common.delete')"
                 >
                   <template #icon>
                     <n-icon :component="Remove" />
@@ -1043,6 +1046,7 @@ async function handleSubmit() {
                           quaternary
                           circle
                           size="small"
+                          :aria-label="t('common.delete')"
                         >
                           <template #icon>
                             <n-icon :component="Remove" />
@@ -1168,6 +1172,7 @@ async function handleSubmit() {
                           quaternary
                           circle
                           size="small"
+                          :aria-label="t('common.delete')"
                         >
                           <template #icon>
                             <n-icon :component="Remove" />
@@ -1216,6 +1221,7 @@ async function handleSubmit() {
                         quaternary
                         circle
                         size="small"
+                        :aria-label="t('common.delete')"
                       >
                         <template #icon>
                           <n-icon :component="Remove" />
