@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"gpt-load/internal/errorpolicy"
+	"strings"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"gorm.io/datatypes"
 )
 
@@ -68,5 +71,26 @@ func TestValidateGroupConfigOverridesKeepsLegacyFailoverCompatibility(t *testing
 		"error_policy":          `{"rules":[]}`,
 	}); err != nil {
 		t.Fatalf("ValidateGroupConfigOverrides returned error: %v", err)
+	}
+}
+
+func TestLogInitializedSystemSettingRedactsSensitiveValue(t *testing.T) {
+	var output bytes.Buffer
+	oldOutput := logrus.StandardLogger().Out
+	oldFormatter := logrus.StandardLogger().Formatter
+	logrus.SetOutput(&output)
+	logrus.SetFormatter(&logrus.TextFormatter{DisableTimestamp: true, DisableColors: true})
+	t.Cleanup(func() {
+		logrus.SetOutput(oldOutput)
+		logrus.SetFormatter(oldFormatter)
+	})
+
+	const secret = "auth-setting-secret"
+	logInitializedSystemSetting("AUTH_KEY", secret)
+	if strings.Contains(output.String(), secret) {
+		t.Fatalf("sensitive system setting leaked to log: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "AUTH_KEY") || !strings.Contains(output.String(), "value redacted") {
+		t.Fatalf("redacted log lost safe setting context: %s", output.String())
 	}
 }

@@ -124,7 +124,7 @@ function handleCancel() {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleCancel">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleCancel">
           <template #icon>
             <n-icon :component="CloseOutline" />
           </template>
@@ -173,10 +173,23 @@ function handleCancel() {
 </template>
 
 <style scoped>
-.group-copy-modal {
-  width: 450px;
-  max-width: 90vw;
+.group-copy-card {
+  display: flex;
+  width: min(450px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
   --n-color: var(--modal-color);
+}
+
+.group-copy-card :deep(.n-card-header),
+.group-copy-card :deep(.n-card__footer) {
+  flex-shrink: 0;
+}
+
+.group-copy-card :deep(.n-card__content) {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal-content {
@@ -228,6 +241,22 @@ function handleCancel() {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .group-copy-card {
+    width: min(450px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .modal-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-actions :deep(.n-button) {
+    min-height: 44px;
+  }
 }
 
 /* 增强表单样式 - 与GroupFormModal保持一致 */

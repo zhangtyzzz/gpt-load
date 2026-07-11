@@ -106,6 +106,22 @@ func (s *RedisStore) LPush(key string, values ...any) error {
 	return s.client.LPush(context.Background(), s.prefixKey(key), values...).Err()
 }
 
+// ReplaceList atomically replaces a list using MULTI/EXEC so readers observe
+// either the previous list or the complete replacement, never an empty window.
+func (s *RedisStore) ReplaceList(key string, values ...any) error {
+	ctx := context.Background()
+	prefixedKey := s.prefixKey(key)
+	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, prefixedKey)
+		if len(values) > 0 {
+			// RPush preserves the caller's order and matches MemoryStore.
+			pipe.RPush(ctx, prefixedKey, values...)
+		}
+		return nil
+	})
+	return err
+}
+
 func (s *RedisStore) LRem(key string, count int64, value any) error {
 	return s.client.LRem(context.Background(), s.prefixKey(key), count, value).Err()
 }
@@ -125,6 +141,24 @@ func (s *RedisStore) Rotate(key string) (string, error) {
 // LLen returns the length of a list.
 func (s *RedisStore) LLen(key string) (int64, error) {
 	return s.client.LLen(context.Background(), s.prefixKey(key)).Result()
+}
+
+// LContains reports whether a list contains the supplied value without
+// mutating list order.
+func (s *RedisStore) LContains(key string, value any) (bool, error) {
+	_, err := s.client.LPos(
+		context.Background(),
+		s.prefixKey(key),
+		fmt.Sprint(value),
+		redis.LPosArgs{},
+	).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // --- SET operations ---
@@ -222,7 +256,6 @@ func (s *RedisStore) Clear() error {
 	var allKeys []string
 
 	for {
-		// Scan for keys with our prefix, 1000 at a time
 		keys, nextCursor, err := s.client.Scan(ctx, cursor, RedisKeyPrefix+"*", 10000).Result()
 		if err != nil {
 			return fmt.Errorf("failed to scan keys: %w", err)
@@ -230,19 +263,15 @@ func (s *RedisStore) Clear() error {
 
 		allKeys = append(allKeys, keys...)
 		cursor = nextCursor
-
-		// When cursor is 0, we've completed the full iteration
 		if cursor == 0 {
 			break
 		}
 	}
 
-	// If no keys found, return early
 	if len(allKeys) == 0 {
 		return nil
 	}
 
-	// Delete keys in batches to avoid overwhelming Redis
 	const batchSize = 1000
 	for i := 0; i < len(allKeys); i += batchSize {
 		end := i + batchSize

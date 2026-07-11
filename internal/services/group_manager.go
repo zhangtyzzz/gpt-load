@@ -139,15 +139,7 @@ func (gm *GroupManager) Initialize() error {
 			}
 
 			groupMap[g.Name] = &g
-			logrus.WithFields(logrus.Fields{
-				"group_name":                 g.Name,
-				"effective_config":           g.EffectiveConfig,
-				"header_rules_count":         len(g.HeaderRuleList),
-				"affinity_rules_count":       len(g.AffinityRuleList),
-				"model_redirect_rules_count": len(g.ModelRedirectMap),
-				"model_redirect_strict":      g.ModelRedirectStrict,
-				"sub_group_count":            len(g.SubGroups),
-			}).Debug("Loaded group with effective config")
+			logrus.WithFields(groupConfigSummaryFields(&g)).Debug("Loaded group with effective config summary")
 		}
 
 		return groupMap, nil
@@ -169,6 +161,22 @@ func (gm *GroupManager) Initialize() error {
 	}
 	gm.syncer = syncer
 	return nil
+}
+
+func groupConfigSummaryFields(group *models.Group) logrus.Fields {
+	return logrus.Fields{
+		"group_name":                 group.Name,
+		"request_timeout_seconds":    group.EffectiveConfig.RequestTimeout,
+		"max_retries":                group.EffectiveConfig.MaxRetries,
+		"blacklist_threshold":        group.EffectiveConfig.BlacklistThreshold,
+		"proxy_key_count":            len(group.EffectiveConfig.ProxyKeysMap),
+		"request_body_logging":       group.EffectiveConfig.EnableRequestBodyLogging,
+		"header_rules_count":         len(group.HeaderRuleList),
+		"affinity_rules_count":       len(group.AffinityRuleList),
+		"model_redirect_rules_count": len(group.ModelRedirectMap),
+		"model_redirect_strict":      group.ModelRedirectStrict,
+		"sub_group_count":            len(group.SubGroups),
+	}
 }
 
 // GetGroupByName retrieves a single group by its name from the cache.

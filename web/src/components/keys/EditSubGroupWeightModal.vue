@@ -151,7 +151,7 @@ function adjustWeight(delta: number) {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -229,7 +229,7 @@ function adjustWeight(delta: number) {
       </n-form>
 
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 12px">
+        <div class="modal-footer">
           <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
           <n-button type="primary" @click="handleSubmit" :loading="loading">
             {{ t("common.confirm") }}
@@ -241,8 +241,22 @@ function adjustWeight(delta: number) {
 </template>
 
 <style scoped>
-.edit-weight-modal {
-  width: 500px;
+.edit-weight-card {
+  display: flex;
+  width: min(500px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.edit-weight-card :deep(.n-card-header),
+.edit-weight-card :deep(.n-card__footer) {
+  flex-shrink: 0;
+}
+
+.edit-weight-card :deep(.n-card__content) {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .form-section {
@@ -330,10 +344,17 @@ function adjustWeight(delta: number) {
   font-style: italic;
 }
 
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
 /* 响应式适配 */
 @media (max-width: 768px) {
-  .edit-weight-modal {
-    width: 90vw;
+  .edit-weight-card {
+    width: min(500px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
   }
 
   .weight-input-section {
@@ -349,6 +370,20 @@ function adjustWeight(delta: number) {
     flex-direction: column;
     align-items: flex-start;
     gap: 4px;
+  }
+
+  .quick-adjust :deep(.n-button) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-footer :deep(.n-button) {
+    min-height: 44px;
   }
 }
 

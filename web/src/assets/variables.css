@@ -1,140 +1,159 @@
-/* 全局 CSS 变量定义 */
-
-/* 浅色主题变量 */
+/*
+ * GPT Load design tokens
+ * Calm, precise, trustworthy. Content is opaque; translucency is reserved for
+ * floating navigation and transient layers so hierarchy stays legible.
+ */
 :root,
 :root.light {
-  /* 背景色 */
+  color-scheme: light;
+
   --bg-primary: #ffffff;
-  --bg-secondary: #f5f7fa;
-  --bg-tertiary: #e5e7eb;
-  --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  --bg-secondary: #f5f5f7;
+  --bg-tertiary: #e8e8ed;
+  --bg-disabled: #f2f2f4;
+  --bg-gradient: linear-gradient(180deg, #fbfbfd 0%, #f5f5f7 42%, #f5f5f7 100%);
 
-  /* 文字颜色 */
-  --text-primary: #1e293b;
-  --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #6e6e73;
+  --text-disabled: #aeaeb2;
   --text-inverse: #ffffff;
+  --color-disabled: #aeaeb2;
 
-  /* 边框颜色 */
-  --border-color: #e2e8f0;
+  --border-color: #d2d2d7;
   --border-color-light: rgba(0, 0, 0, 0.08);
+  --separator-color: rgba(60, 60, 67, 0.18);
 
-  /* 卡片背景 */
-  --card-bg: rgba(255, 255, 255, 0.95);
+  --card-bg: rgba(255, 255, 255, 0.96);
   --card-bg-solid: #ffffff;
+  --header-bg: rgba(250, 250, 252, 0.78);
+  --footer-bg: rgba(250, 250, 252, 0.9);
+  --modal-color: #ffffff;
+  --overlay-bg: rgba(245, 245, 247, 0.8);
+  --code-bg: #f5f5f7;
+  --hover-bg: rgba(0, 113, 227, 0.08);
+  --scrollbar-bg: rgba(60, 60, 67, 0.22);
+  --focus-ring: rgba(0, 113, 227, 0.52);
 
-  /* 组件颜色 */
-  --header-bg: rgba(255, 255, 255, 0.95);
-  --footer-bg: rgba(255, 255, 255, 0.95);
+  --success-bg: rgba(36, 138, 61, 0.08);
+  --success-border: rgba(36, 138, 61, 0.2);
+  --error-bg: rgba(215, 0, 21, 0.07);
+  --error-border: rgba(215, 0, 21, 0.18);
+  --invalid-bg: #f5f5f7;
+  --invalid-border: #d2d2d7;
+  --error-bg-color: rgba(215, 0, 21, 0.07);
+  --error-border-color: rgba(215, 0, 21, 0.2);
+  --error-text-color: #b50016;
 
-  /* 状态颜色 */
-  --success-bg: rgba(24, 160, 88, 0.1);
-  --success-border: rgba(24, 160, 88, 0.3);
-  --error-bg: rgba(255, 193, 7, 0.1);
-  --error-border: rgba(255, 193, 7, 0.5);
-  --invalid-bg: rgb(250, 250, 252);
-  --invalid-border: #ddd;
+  --chart-bg: #ffffff;
+  --chart-grid: #ededf0;
+  --chart-axis: #d2d2d7;
+  --chart-text: #6e6e73;
+  --chart-legend-bg: rgba(255, 255, 255, 0.84);
+  --chart-legend-text: #1d1d1f;
+  --chart-legend-secondary: #6e6e73;
 
-  /* 图表颜色 */
-  --chart-bg: white;
-  --chart-grid: #f0f0f0;
-  --chart-axis: #e0e0e0;
-  --chart-text: #666;
-  --chart-legend-bg: rgba(255, 255, 255, 0.6);
-  --chart-legend-text: #334155;
-  --chart-legend-secondary: #475569;
-
-  /* 阴影 */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-
-  /* 其他 */
-  --overlay-bg: rgba(255, 255, 255, 0.8);
-  --code-bg: #f8f9fa;
-  --scrollbar-bg: rgba(0, 0, 0, 0.05);
-  --hover-bg: rgba(102, 126, 234, 0.08);
-  --modal-color: rgba(255, 255, 255, 0.95);
-  --success-color: #18a058;
-  --error-color: #d03050;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.035);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.08);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.12);
 }
 
-/* 深色主题变量 */
 :root.dark {
-  /* 背景色 - 外层浅色，内容深色 */
-  --bg-primary: #2b3038;
-  --bg-secondary: #323841;
-  --bg-tertiary: #3a414d;
-  --bg-gradient: linear-gradient(135deg, #323841 0%, #2b3038 100%);
+  color-scheme: dark;
 
-  /* 文字颜色 - 浅色高对比 */
-  --text-primary: #e8e8e8;
-  --text-secondary: #b4b4b4;
-  --text-tertiary: #888888;
-  --text-inverse: #1a1d23;
+  --bg-primary: #000000;
+  --bg-secondary: #101012;
+  --bg-tertiary: #1c1c1e;
+  --bg-disabled: #1c1c1e;
+  --bg-gradient: linear-gradient(180deg, #111113 0%, #080809 48%, #000000 100%);
 
-  /* 边框颜色 */
-  --border-color: #1a1d23;
-  --border-color-light: rgba(255, 255, 255, 0.06);
+  --text-primary: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --text-tertiary: #8e8e93;
+  --text-disabled: #636366;
+  --text-inverse: #111113;
+  --color-disabled: #636366;
 
-  /* 卡片背景 - 深黑色内容 */
-  --card-bg: rgba(15, 17, 21, 0.95);
-  --card-bg-solid: #0f1115;
+  --border-color: #38383a;
+  --border-color-light: rgba(255, 255, 255, 0.1);
+  --separator-color: rgba(84, 84, 88, 0.65);
 
-  /* 组件颜色 - 深黑色 */
-  --header-bg: rgba(15, 17, 21, 0.95);
-  --footer-bg: rgba(15, 17, 21, 0.95);
+  --card-bg: rgba(28, 28, 30, 0.96);
+  --card-bg-solid: #1c1c1e;
+  --header-bg: rgba(20, 20, 22, 0.76);
+  --footer-bg: rgba(20, 20, 22, 0.9);
+  --modal-color: #1c1c1e;
+  --overlay-bg: rgba(0, 0, 0, 0.78);
+  --code-bg: #2c2c2e;
+  --hover-bg: rgba(10, 132, 255, 0.16);
+  --scrollbar-bg: rgba(235, 235, 245, 0.24);
+  --focus-ring: rgba(10, 132, 255, 0.72);
 
-  /* 状态颜色 */
-  --success-bg: rgba(24, 160, 88, 0.12);
-  --success-border: rgba(24, 160, 88, 0.35);
-  --error-bg: rgba(255, 193, 7, 0.12);
-  --error-border: rgba(255, 193, 7, 0.35);
-  --invalid-bg: rgba(15, 17, 21, 0.6);
-  --invalid-border: #2a2f38;
+  --success-bg: rgba(48, 209, 88, 0.1);
+  --success-border: rgba(48, 209, 88, 0.26);
+  --error-bg: rgba(255, 69, 58, 0.1);
+  --error-border: rgba(255, 69, 58, 0.26);
+  --invalid-bg: #1c1c1e;
+  --invalid-border: #38383a;
+  --error-bg-color: rgba(255, 69, 58, 0.1);
+  --error-border-color: rgba(255, 69, 58, 0.26);
+  --error-text-color: #ff6961;
 
-  /* 图表颜色 - 深黑色背景 */
-  --chart-bg: rgba(12, 14, 18, 0.98);
-  --chart-grid: #2a2f38;
-  --chart-axis: #2a2f38;
-  --chart-text: #b4b4b4;
-  --chart-legend-bg: rgba(15, 17, 21, 0.95);
-  --chart-legend-text: #e8e8e8;
-  --chart-legend-secondary: #b4b4b4;
+  --chart-bg: #1c1c1e;
+  --chart-grid: #2c2c2e;
+  --chart-axis: #38383a;
+  --chart-text: #a1a1a6;
+  --chart-legend-bg: rgba(28, 28, 30, 0.88);
+  --chart-legend-text: #f5f5f7;
+  --chart-legend-secondary: #a1a1a6;
 
-  /* 阴影 */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
-
-  /* 其他 */
-  --overlay-bg: rgba(15, 17, 21, 0.8);
-  --code-bg: #0f1115;
-  --scrollbar-bg: rgba(255, 255, 255, 0.1);
-  --hover-bg: rgba(102, 126, 234, 0.15);
-  --modal-color: rgba(15, 17, 21, 0.98);
-  --success-color: #52c41a;
-  --error-color: #ff4d4f;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.42);
+  --shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.56);
 }
 
-/* 通用颜色（不受主题影响） */
 :root {
-  /* 主题色 */
-  --primary-color: #667eea;
-  --primary-color-hover: #5a6fd8;
-  --primary-color-pressed: #4c63d2;
-  --primary-color-suppl: rgba(102, 126, 234, 0.1);
-  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  --success-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-  --warning-gradient: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  --primary-color: #0071e3;
+  --primary-color-hover: #0077ed;
+  --primary-color-pressed: #006edb;
+  --primary-color-suppl: rgba(0, 113, 227, 0.1);
+  --primary-gradient: linear-gradient(180deg, #0a84ff 0%, #0071e3 100%);
+  --secondary-gradient: linear-gradient(180deg, #64d2ff 0%, #0a84ff 100%);
+  --success-gradient: linear-gradient(180deg, #34c759 0%, #248a3d 100%);
+  --warning-gradient: linear-gradient(180deg, #ffcc00 0%, #ff9f0a 100%);
 
-  /* 边框半径 */
+  --success-color: #248a3d;
+  --warning-color: #b25000;
+  --error-color: #d70015;
+
   --border-radius-sm: 8px;
   --border-radius-md: 12px;
   --border-radius-lg: 16px;
-  --border-radius-xl: 24px;
+  --border-radius-xl: 22px;
 
-  /* 阴影（添加到通用部分） */
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  --material-blur: 24px;
+  --motion-fast: 140ms;
+  --motion-default: 220ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root.dark {
+  --primary-color: #0a84ff;
+  --primary-color-hover: #409cff;
+  --primary-color-pressed: #0071e3;
+  --primary-color-suppl: rgba(10, 132, 255, 0.16);
+  --success-color: #30d158;
+  --warning-color: #ffd60a;
+  --error-color: #ff453a;
 }

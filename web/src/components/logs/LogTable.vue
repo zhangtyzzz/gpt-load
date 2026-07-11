@@ -2,15 +2,12 @@
 import { logApi } from "@/api/logs";
 import type { LogFilter, RequestLog } from "@/types/models";
 import { copy } from "@/utils/clipboard";
-import { maskKey } from "@/utils/display";
 import {
   CheckmarkDoneOutline,
   CloseCircleOutline,
   CopyOutline,
   DocumentTextOutline,
   DownloadOutline,
-  EyeOffOutline,
-  EyeOutline,
   ReloadOutline,
   Search,
   SettingsOutline,
@@ -38,14 +35,12 @@ import {
 import { computed, h, onMounted, reactive, ref, watch, type VNodeChild } from "vue";
 import { useI18n } from "vue-i18n";
 
-const { t } = useI18n();
+const { locale, t } = useI18n();
 
 // Message instance
 const message = useMessage();
 
-interface LogRow extends RequestLog {
-  is_key_visible: boolean;
-}
+type LogRow = RequestLog;
 
 // Column configuration
 interface ColumnConfig {
@@ -61,11 +56,14 @@ interface ColumnConfig {
 
 // Data
 const loading = ref(false);
+const exporting = ref(false);
+const hasLoaded = ref(false);
+const loadError = ref<string | null>(null);
 const logs = ref<LogRow[]>([]);
 const currentPage = ref(1);
 const pageSize = ref(15);
 const total = ref(0);
-const totalPages = computed(() => Math.ceil(total.value / pageSize.value));
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
 // Modal for viewing request/response details
 const showDetailModal = ref(false);
@@ -86,19 +84,44 @@ const filters = reactive({
   request_type: ref(null),
 });
 
-const successOptions = [
+const hasActiveFilters = computed(() =>
+  [
+    filters.parent_group_name,
+    filters.group_name,
+    filters.key_value,
+    filters.model,
+    filters.is_success,
+    filters.status_code,
+    filters.source_ip,
+    filters.error_contains,
+    filters.start_time,
+    filters.end_time,
+    filters.request_type,
+  ].some(value => value !== "" && value !== null)
+);
+
+const successOptions = computed(() => [
   { label: t("common.success"), value: "true" },
   { label: t("common.error"), value: "false" },
-];
+]);
 
-const requestTypeOptions = [
+const requestTypeOptions = computed(() => [
   { label: t("logs.retryRequest"), value: "retry" },
   { label: t("logs.finalRequest"), value: "final" },
-];
+]);
 
 // Fetch data
+let latestLoadRequest = 0;
+
 const loadLogs = async () => {
+  const requestId = ++latestLoadRequest;
   loading.value = true;
+  loadError.value = null;
+  logs.value = [];
+  total.value = 0;
+  showDetailModal.value = false;
+  selectedLog.value = null;
+
   try {
     const params: LogFilter = {
       page: currentPage.value,
@@ -120,22 +143,25 @@ const loadLogs = async () => {
     };
 
     const res = await logApi.getLogs(params);
+    if (requestId !== latestLoadRequest) {
+      return;
+    }
+
     if (res.code === 0 && res.data) {
-      logs.value = res.data.items.map(log => ({ ...log, is_key_visible: false }));
+      logs.value = res.data.items;
       total.value = res.data.pagination.total_items;
     } else {
-      logs.value = [];
-      total.value = 0;
-      window.$message.error(res.message || t("logs.loadFailed"), {
-        keepAliveOnHover: true,
-        duration: 5000,
-        closable: true,
-      });
+      loadError.value = res.message || t("logs.loadFailed");
     }
   } catch (_error) {
-    window.$message.error(t("logs.requestFailed"));
+    if (requestId === latestLoadRequest) {
+      loadError.value = t("logs.requestFailed");
+    }
   } finally {
-    loading.value = false;
+    if (requestId === latestLoadRequest) {
+      loading.value = false;
+      hasLoaded.value = true;
+    }
   }
 };
 
@@ -144,11 +170,10 @@ const formatDateTime = (timestamp: string) => {
     return "-";
   }
   const date = new Date(timestamp);
-  return date.toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-");
-};
-
-const toggleKeyVisibility = (row: LogRow) => {
-  row.is_key_visible = !row.is_key_visible;
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+  return date.toLocaleString(locale.value, { hour12: false });
 };
 
 const viewLogDetails = (row: LogRow) => {
@@ -209,6 +234,31 @@ const setDefaultColumns = () => {
 // Save column preferences to localStorage
 const saveColumnPreferences = () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleColumns.value));
+};
+
+const renderKeyIdentifier = (row: LogRow) => {
+  const identifier = row.key_value;
+  const children = [
+    h(NEllipsis, { style: "max-width: 150px" }, { default: () => identifier || "-" }),
+  ];
+
+  if (identifier) {
+    children.push(
+      h(
+        NButton,
+        {
+          size: "tiny",
+          text: true,
+          title: t("logs.copyKeyIdentifier"),
+          "aria-label": t("logs.copyKeyIdentifier"),
+          onClick: () => void copyContent(identifier, t("logs.keyIdentifier")),
+        },
+        { icon: () => h(NIcon, null, { default: () => h(CopyOutline) }) }
+      )
+    );
+  }
+
+  return h(NSpace, { align: "center", wrap: false }, () => children);
 };
 
 // Watch for changes and save
@@ -299,25 +349,10 @@ const allColumnConfigs: ColumnConfig[] = [
   },
   {
     key: "key_value",
-    title: "Key",
+    title: t("logs.keyIdentifier"),
     width: 200,
     defaultVisible: true,
-    render: (row: LogRow) =>
-      h(NSpace, { align: "center", wrap: false }, () => [
-        h(
-          NEllipsis,
-          { style: "max-width: 150px" },
-          { default: () => (row.is_key_visible ? row.key_value : maskKey(row.key_value || "")) }
-        ),
-        h(
-          NButton,
-          { size: "tiny", text: true, onClick: () => toggleKeyVisibility(row) },
-          {
-            icon: () =>
-              h(NIcon, null, { default: () => h(row.is_key_visible ? EyeOffOutline : EyeOutline) }),
-          }
-        ),
-      ]),
+    render: renderKeyIdentifier,
   },
   {
     key: "source_ip",
@@ -413,8 +448,11 @@ onMounted(() => {
 watch([currentPage, pageSize], loadLogs);
 
 const handleSearch = () => {
-  currentPage.value = 1;
-  loadLogs();
+  if (currentPage.value !== 1) {
+    currentPage.value = 1;
+    return;
+  }
+  void loadLogs();
 };
 
 const resetFilters = () => {
@@ -432,7 +470,11 @@ const resetFilters = () => {
   handleSearch();
 };
 
-const exportLogs = () => {
+const exportLogs = async () => {
+  if (exporting.value) {
+    return;
+  }
+
   const params: Omit<LogFilter, "page" | "page_size"> = {
     parent_group_name: filters.parent_group_name || undefined,
     group_name: filters.group_name || undefined,
@@ -449,7 +491,31 @@ const exportLogs = () => {
     end_time: filters.end_time ? new Date(filters.end_time).toISOString() : undefined,
     request_type: filters.request_type || undefined,
   };
-  logApi.exportLogs(params);
+
+  exporting.value = true;
+  let downloadUrl: string | null = null;
+  let link: HTMLAnchorElement | null = null;
+
+  try {
+    const blob = await logApi.exportLogs(params);
+    downloadUrl = URL.createObjectURL(blob);
+    link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `logs-${Date.now()}.csv`;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    message.success(t("common.operationSuccess"));
+  } catch (_error) {
+    message.error(t("logs.requestFailed"));
+  } finally {
+    link?.remove();
+    if (downloadUrl) {
+      const urlToRevoke = downloadUrl;
+      window.setTimeout(() => URL.revokeObjectURL(urlToRevoke), 0);
+    }
+    exporting.value = false;
+  }
 };
 
 function changePage(page: number) {
@@ -557,7 +623,7 @@ const deselectAllColumns = () => {
               <div class="filter-item">
                 <n-input
                   v-model:value="filters.key_value"
-                  :placeholder="t('logs.key')"
+                  :placeholder="t('logs.keySearchPlaceholder')"
                   size="small"
                   clearable
                   @keyup.enter="handleSearch"
@@ -576,7 +642,12 @@ const deselectAllColumns = () => {
                 <n-button-group size="small">
                   <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-button ghost :disabled="loading" @click="handleSearch">
+                      <n-button
+                        ghost
+                        :disabled="loading"
+                        :aria-label="t('common.search')"
+                        @click="handleSearch"
+                      >
                         <template #icon>
                           <n-icon :component="Search" />
                         </template>
@@ -586,7 +657,7 @@ const deselectAllColumns = () => {
                   </n-tooltip>
                   <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-button @click="resetFilters">
+                      <n-button :aria-label="t('common.reset')" @click="resetFilters">
                         <template #icon>
                           <n-icon :component="ReloadOutline" />
                         </template>
@@ -596,7 +667,13 @@ const deselectAllColumns = () => {
                   </n-tooltip>
                   <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-button ghost @click="exportLogs">
+                      <n-button
+                        ghost
+                        :loading="exporting"
+                        :disabled="exporting"
+                        :aria-label="t('logs.exportLogs')"
+                        @click="exportLogs"
+                      >
                         <template #icon>
                           <n-icon :component="DownloadOutline" />
                         </template>
@@ -608,7 +685,7 @@ const deselectAllColumns = () => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button ghost>
+                          <n-button ghost :aria-label="t('logs.customColumns')">
                             <template #icon>
                               <n-icon :component="SettingsOutline" />
                             </template>
@@ -622,7 +699,11 @@ const deselectAllColumns = () => {
                         <n-space>
                           <n-tooltip trigger="hover">
                             <template #trigger>
-                              <n-button size="tiny" @click="selectAllColumns">
+                              <n-button
+                                size="tiny"
+                                :aria-label="t('common.selectAll')"
+                                @click="selectAllColumns"
+                              >
                                 <template #icon>
                                   <n-icon :component="CheckmarkDoneOutline" />
                                 </template>
@@ -632,7 +713,11 @@ const deselectAllColumns = () => {
                           </n-tooltip>
                           <n-tooltip trigger="hover">
                             <template #trigger>
-                              <n-button size="tiny" @click="deselectAllColumns">
+                              <n-button
+                                size="tiny"
+                                :aria-label="t('common.deselectAll')"
+                                @click="deselectAllColumns"
+                              >
                                 <template #icon>
                                   <n-icon :component="CloseCircleOutline" />
                                 </template>
@@ -662,22 +747,40 @@ const deselectAllColumns = () => {
         </div>
       </div>
       <div class="table-main">
-        <!-- 表格 -->
-        <div class="table-container">
-          <n-spin :show="loading">
-            <n-data-table
-              :columns="columns"
-              :data="logs"
-              :bordered="false"
-              remote
-              size="small"
-              :scroll-x="scrollX"
-            />
-          </n-spin>
+        <div class="table-container" :aria-busy="loading">
+          <div v-if="loading" class="table-state" role="status" aria-live="polite">
+            <n-spin size="small" />
+            <span>{{ t("common.loading") }}</span>
+          </div>
+
+          <div v-else-if="loadError" class="table-state table-state--error" role="alert">
+            <n-icon :component="CloseCircleOutline" :size="26" aria-hidden="true" />
+            <span>{{ loadError }}</span>
+            <n-button size="small" @click="loadLogs">{{ t("common.retry") }}</n-button>
+          </div>
+
+          <div v-else-if="hasLoaded && logs.length === 0" class="table-state" role="status">
+            <n-icon :component="DocumentTextOutline" :size="26" aria-hidden="true" />
+            <span>{{ t("logs.noLogs") }}</span>
+            <n-button v-if="hasActiveFilters" size="small" @click="resetFilters">
+              {{ t("common.reset") }}
+            </n-button>
+            <n-button v-else size="small" @click="loadLogs">{{ t("common.refresh") }}</n-button>
+          </div>
+
+          <n-data-table
+            v-else
+            :columns="columns"
+            :data="logs"
+            :bordered="false"
+            remote
+            size="small"
+            :scroll-x="scrollX"
+          />
         </div>
 
         <!-- 分页 -->
-        <div class="pagination-container">
+        <div v-if="hasLoaded && !loadError && total > 0" class="pagination-container">
           <div class="pagination-info">
             <span>{{ t("logs.totalRecords", { total }) }}</span>
             <n-select
@@ -720,10 +823,17 @@ const deselectAllColumns = () => {
     <n-modal
       v-model:show="showDetailModal"
       preset="card"
-      style="width: 1000px"
+      class="log-detail-modal"
+      style="
+        width: min(1000px, calc(100vw - 2rem));
+        max-height: calc(
+          100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom))
+        );
+        overflow: hidden;
+      "
       :title="t('logs.requestDetails')"
     >
-      <div v-if="selectedLog" style="max-height: 65vh; overflow-y: auto">
+      <div v-if="selectedLog" class="detail-modal-scroll">
         <n-space vertical size="small">
           <!-- 基本信息 -->
           <n-card
@@ -779,28 +889,19 @@ const deselectAllColumns = () => {
                 <span class="detail-value-compact">{{ selectedLog.source_ip || "-" }}</span>
               </div>
               <div class="detail-item-compact key-item">
-                <span class="detail-label-compact">{{ t("logs.key") }}:</span>
+                <span class="detail-label-compact">{{ t("logs.keyIdentifier") }}:</span>
                 <div class="key-display-compact">
                   <span class="key-value-compact">
-                    {{
-                      selectedLog.is_key_visible
-                        ? selectedLog.key_value || "-"
-                        : maskKey(selectedLog.key_value || "")
-                    }}
+                    {{ selectedLog.key_value || "-" }}
                   </span>
                   <div class="key-actions-compact">
-                    <n-button size="tiny" text @click="toggleKeyVisibility(selectedLog)">
-                      <template #icon>
-                        <n-icon
-                          :component="selectedLog.is_key_visible ? EyeOffOutline : EyeOutline"
-                        />
-                      </template>
-                    </n-button>
                     <n-button
                       v-if="selectedLog.key_value"
                       size="tiny"
                       text
-                      @click="copyContent(selectedLog.key_value, 'API Key')"
+                      :title="t('logs.copyKeyIdentifier')"
+                      :aria-label="t('logs.copyKeyIdentifier')"
+                      @click="copyContent(selectedLog.key_value, t('logs.keyIdentifier'))"
                     >
                       <template #icon>
                         <n-icon :component="CopyOutline" />
@@ -825,6 +926,7 @@ const deselectAllColumns = () => {
                   <n-button
                     size="tiny"
                     text
+                    :aria-label="`${t('common.copy')} ${t('logs.requestPath')}`"
                     @click="copyContent(selectedLog.request_path, t('logs.requestPath'))"
                   >
                     <template #icon>
@@ -843,6 +945,7 @@ const deselectAllColumns = () => {
                   <n-button
                     size="tiny"
                     text
+                    :aria-label="`${t('common.copy')} ${t('logs.upstreamAddress')}`"
                     @click="copyContent(selectedLog.upstream_addr, t('logs.upstreamAddress'))"
                   >
                     <template #icon>
@@ -857,11 +960,12 @@ const deselectAllColumns = () => {
 
               <div class="compact-field" v-if="selectedLog.user_agent">
                 <div class="compact-field-header">
-                  <span class="compact-field-title">User Agent</span>
+                  <span class="compact-field-title">{{ t("logs.userAgent") }}</span>
                   <n-button
                     size="tiny"
                     text
-                    @click="copyContent(selectedLog.user_agent, 'User Agent')"
+                    :aria-label="`${t('common.copy')} ${t('logs.userAgent')}`"
+                    @click="copyContent(selectedLog.user_agent, t('logs.userAgent'))"
                   >
                     <template #icon>
                       <n-icon :component="CopyOutline" />
@@ -879,6 +983,7 @@ const deselectAllColumns = () => {
                   <n-button
                     size="tiny"
                     text
+                    :aria-label="`${t('common.copy')} ${t('logs.requestContent')}`"
                     @click="
                       copyContent(
                         formatJsonString(selectedLog.request_body),
@@ -910,6 +1015,7 @@ const deselectAllColumns = () => {
                 size="tiny"
                 text
                 ghost
+                :aria-label="`${t('common.copy')} ${t('logs.errorMessage')}`"
                 @click="copyContent(selectedLog.error_message, t('logs.errorMessage'))"
               >
                 <template #icon>
@@ -936,18 +1042,19 @@ const deselectAllColumns = () => {
 
 <style scoped>
 .log-table-container {
-  /* background: white; */
-  /* border-radius: 8px; */
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   display: flex;
+  overflow: hidden;
   flex-direction: column;
-  /* height: 100%; */
-}
-.toolbar {
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--border-radius-lg);
   background: var(--card-bg-solid);
-  border-radius: 8px;
-  padding: 16px;
-  border-bottom: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.toolbar {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-color-light);
+  background: var(--bg-secondary);
 }
 
 .filter-section {
@@ -959,7 +1066,7 @@ const deselectAllColumns = () => {
 .filter-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end; /* Aligns buttons with the bottom of the filter items */
+  align-items: flex-end;
   gap: 16px;
 }
 
@@ -967,12 +1074,12 @@ const deselectAllColumns = () => {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  flex: 1 1 auto; /* Let it take available space and wrap */
+  flex: 1 1 auto;
 }
 
 .filter-item {
-  flex: 1 1 180px; /* Each item will have a base width of 180px and can grow */
-  min-width: 180px; /* Prevent from becoming too narrow */
+  flex: 1 1 180px;
+  min-width: 180px;
 }
 
 .filter-actions {
@@ -981,69 +1088,39 @@ const deselectAllColumns = () => {
   gap: 8px;
 }
 
-@media (max-width: 768px) {
-  .pagination-container {
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .filter-grid {
-    width: 100%;
-  }
-
-  .filter-item {
-    flex: 1 1 100%;
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 480px) {
-  .filter-actions {
-    width: 100%;
-  }
-
-  .filter-actions :deep(.n-button-group) {
-    display: flex;
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .filter-actions :deep(.n-button) {
-    flex: 1;
-    min-width: 40px;
-  }
-}
-
 .table-main {
   background: var(--card-bg-solid);
-  border-radius: 8px;
   overflow: hidden;
 }
+
 .table-container {
-  /* background: white;
-  border-radius: 8px; */
   flex: 1;
   overflow: auto;
   position: relative;
+  min-height: 13rem;
 }
-.empty-container {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+
+.table-state {
+  display: grid;
+  min-height: 13rem;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--text-secondary);
+  text-align: center;
 }
+
+.table-state--error {
+  color: var(--error-color);
+}
+
 .pagination-container {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px;
-  border-top: 1px solid var(--border-color);
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border-color-light);
 }
 .pagination-info {
   display: flex;
@@ -1062,26 +1139,6 @@ const deselectAllColumns = () => {
   color: var(--text-secondary);
 }
 
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-}
-
-.detail-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.detail-label {
-  font-weight: 500;
-  color: var(--text-secondary);
-  min-width: 70px;
-  flex-shrink: 0;
-}
-
-/* 紧凑布局样式 */
 .detail-grid-compact {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -1123,12 +1180,12 @@ const deselectAllColumns = () => {
 }
 
 .key-value-compact {
-  font-family: monospace;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
+  background: var(--code-bg);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--border-radius-sm);
   padding: 4px 6px;
   flex: 1;
   min-width: 0;
@@ -1153,26 +1210,19 @@ const deselectAllColumns = () => {
 }
 
 .compact-field {
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  padding: 6px;
-  background: var(--bg-tertiary);
+  padding: 0.5rem;
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--border-radius-sm);
+  background: var(--code-bg);
 }
 
 .compact-field-error {
-  border: 1px solid var(--error-border-color, #f5c6cb);
-  background: var(--error-bg-color, #f8d7da);
+  border-color: var(--error-border-color);
+  background: var(--error-bg-color);
 }
 
 .compact-field-error .compact-field-content {
-  color: var(--error-text-color, #721c24);
-}
-
-/* 暗黑模式下的错误信息样式 */
-:global(.dark) .compact-field-error {
-  --error-border-color: rgba(248, 113, 113, 0.3);
-  --error-bg-color: rgba(239, 68, 68, 0.1);
-  --error-text-color: #fca5a5;
+  color: var(--error-text-color);
 }
 
 .compact-field-header {
@@ -1189,7 +1239,7 @@ const deselectAllColumns = () => {
 }
 
 .compact-field-content {
-  font-family: monospace;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 10px;
   line-height: 1.3;
   word-break: break-all;
@@ -1199,84 +1249,62 @@ const deselectAllColumns = () => {
   overflow-y: auto;
 }
 
-.detail-field {
-  margin-bottom: 8px;
-}
-
-.field-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.field-title {
-  font-weight: 500;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.field-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.field-content {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-all;
-  color: #495057;
-}
-
-.key-display {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.key-value {
-  font-family: monospace;
-  font-size: 12px;
-  color: #856404;
-  background: #fff3cd;
-  border: 1px solid #ffeaa7;
-  border-radius: 4px;
-  padding: 4px 8px;
-}
-
-.key-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.empty-content {
-  text-align: center;
-  color: #6c757d;
-  padding: 24px;
-  background: #f8f9fa;
-  border-radius: 6px;
-  font-style: italic;
-}
-
-.code-block {
-  max-height: 400px;
-  overflow-y: auto;
-  border-radius: 6px;
-}
-
-.error-block {
-  max-height: 200px;
-}
-
-/* Column selector styles */
 .column-selector {
-  min-width: 100px;
-  max-height: 400px;
+  min-width: 10rem;
+  max-height: min(25rem, 65vh);
   overflow-y: auto;
+}
+
+.detail-modal-scroll {
+  max-height: calc(100dvh - 12rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    padding: 0.875rem;
+  }
+
+  .filter-grid {
+    width: 100%;
+  }
+
+  .filter-item {
+    flex: 1 1 100%;
+    min-width: 100%;
+  }
+
+  .filter-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .pagination-container {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+}
+
+@media (max-width: 480px) {
+  .filter-actions :deep(.n-button-group) {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .filter-actions :deep(.n-button) {
+    min-width: 2.75rem;
+    flex: 1;
+  }
+
+  .pagination-info,
+  .pagination-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
 }
 </style>

@@ -6,6 +6,7 @@ import (
 	"gpt-load/internal/encryption"
 	"gpt-load/internal/keypool"
 	"gpt-load/internal/models"
+	"gpt-load/internal/utils"
 	"io"
 	"regexp"
 	"strings"
@@ -120,7 +121,7 @@ func (s *KeyService) processAndCreateKeys(
 
 		encryptedKey, err := s.EncryptionSvc.Encrypt(trimmedKey)
 		if err != nil {
-			logrus.WithError(err).WithField("key", trimmedKey).Error("Failed to encrypt key, skipping")
+			logrus.WithError(err).WithField("key_identifier", utils.KeyFingerprint(keyHash)).Error("Failed to encrypt key, skipping")
 			continue
 		}
 

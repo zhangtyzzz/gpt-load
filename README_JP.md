@@ -2,35 +2,15 @@
 
 [English](README.md) | [中文](README_CN.md) | 日本語
 
-[![Release](https://img.shields.io/github/v/release/tbphp/gpt-load)](https://github.com/tbphp/gpt-load/releases)
-![Go Version](https://img.shields.io/badge/Go-1.24+-blue.svg)
+[![Release](https://img.shields.io/github/v/release/zhangtyzzz/gpt-load)](https://github.com/zhangtyzzz/gpt-load/releases)
+![Go Version](https://img.shields.io/badge/Go-1.25+-blue.svg)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 複数のAIサービスを統合する必要がある企業や開発者向けに特別に設計された、高性能でエンタープライズグレードのAI APIトランスペアレントプロキシサービス。Goで構築され、インテリジェントなキー管理、ロードバランシング、包括的な監視機能を備え、高並行性の本番環境向けに設計されています。
 
-詳細なドキュメントについては、[公式ドキュメント](https://www.gpt-load.com/docs?lang=ja)をご覧ください。
-
-<a href="https://trendshift.io/repositories/14880" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14880" alt="tbphp%2Fgpt-load | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-<a href="https://hellogithub.com/repository/tbphp/gpt-load" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=554dc4c46eb14092b9b0c56f1eb9021c&claim_uid=Qlh8vzrWJ0HCneG" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-
-## スポンサー
-
-<table>
-<tbody>
-<tr>
-<td width="180"><a href="https://unity2.ai/register?source=gptload"><img src="./screenshot/unity2ai.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>Unity2.aiによる本プロジェクトへのスポンサー支援に感謝します！Unity2.aiは、個人開発者、チーム、企業向けの高性能AIモデルAPI中継プラットフォームです。中国国内の大手企業に長期的にサービスを提供しており、1日あたり300億token超の呼び出しを処理し、5000 RPM級の高並行性をサポートします。残高課金、初回チャージ特典、組み合わせサブスクリプション、企業向け請求書発行、専属連携サポートに対応しています。<a href="https://unity2.ai/register?source=gptload">こちらのリンク</a>から登録すると$2の残高を受け取れ、公式グループ参加でさらに$10の残高、最大$12の無料枠を受け取れます。</td>
-</tr>
-<tr>
-<td width="180"><a href="https://linux.do"><img src="./screenshot/l.png" alt="LINUX DO" width="150"></a></td>
-<td>LINUX DOコミュニティからのサポートに心より感謝いたします！</td>
-</tr>
-<tr>
-<td width="180"><a href="https://www.digitalocean.com/?refcode=3d52cff21342&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge"><img src="https://web-platforms.sfo2.cdn.digitaloceanspaces.com/WWW/Badge%202.svg" alt="DigitalOcean Referral Badge" width="150"></a></td>
-<td>このプロジェクトはDigitalOceanの支援を受けています。</td>
-</tr>
-</tbody>
-</table>
+この独立ディストリビューションは
+[`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load) で継続的に管理されています。
+プロジェクトのドキュメント、リリースノート、サポート窓口はこのリポジトリを正とします。
 
 ## 特徴
 
@@ -58,7 +38,7 @@ GPT-Loadは、さまざまなAIサービスプロバイダーのネイティブA
 
 ### システム要件
 
-- Go 1.24+（ソースビルド用）
+- Go 1.25+（ソースビルド用）
 - Docker（コンテナ化デプロイメント用）
 - MySQL、PostgreSQL、またはSQLite（データベースストレージ用）
 - Redis（キャッシュと分散調整用、オプション）
@@ -70,7 +50,7 @@ docker run -d --name gpt-load \
     -p 3001:3001 \
     -e AUTH_KEY=your-secure-key-here \
     -v "$(pwd)/data":/app/data \
-    ghcr.io/tbphp/gpt-load:latest
+    ghcr.io/zhangtyzzz/gpt-load:latest
 ```
 
 > `your-secure-key-here`を強力なパスワードに変更してください（デフォルト値は絶対に使用しないでください）。その後、管理インターフェースにログインできます：<http://localhost:3001>
@@ -84,8 +64,8 @@ docker run -d --name gpt-load \
 mkdir -p gpt-load && cd gpt-load
 
 # 設定ファイルをダウンロード
-wget https://raw.githubusercontent.com/tbphp/gpt-load/refs/heads/main/docker-compose.yml
-wget -O .env https://raw.githubusercontent.com/tbphp/gpt-load/refs/heads/main/.env.example
+wget https://raw.githubusercontent.com/zhangtyzzz/gpt-load/refs/heads/main/docker-compose.yml
+wget -O .env https://raw.githubusercontent.com/zhangtyzzz/gpt-load/refs/heads/main/.env.example
 
 # .envファイルを編集し、AUTH_KEYを強力なパスワードに変更します。デフォルトやsk-123456のような単純なキーは絶対に使用しないでください。
 
@@ -115,6 +95,24 @@ docker compose down && docker compose up -d
 docker compose pull && docker compose down && docker compose up -d
 ```
 
+> [!IMPORTANT]
+> **v1.6.0-beta.1 アップグレード時の注意：**事前にデータベースをバックアップし、
+> 移動する `beta` タグではなく、正確な
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.1` イメージを指定してください。
+> 初回起動時に、過去の `request_logs.key_value` にある可逆値がバックグラウンドの
+> 小さなバッチで不可逆に削除されます。完全なKeyでリクエストログを検索する旧クライアントは、
+> GETクエリパラメータから `POST /api/logs/search` または
+> `POST /api/logs/export` へ移行してください。通常のGETフィルターと `fp:*`
+> フィンガープリント検索には影響しません。Key管理の完全なKey検索も
+> `POST /api/keys/search` に移行し、JSON本文で `group_id`、任意の `status`、
+> `key_value` を送信してください。通常のGET一覧とステータスフィルターは互換です。
+> リクエストログAPIの `key_value` は `fp:*` 指紋だけを返します。CSV列は
+> `key_value` から `key_identifier` に改名され、同様に指紋だけを返します。
+> Key管理では、すべて・有効・無効の各選択について、引き続き完全なKeyをエクスポートできます。
+> Key APIは内部の `key_hash` をシリアライズしなくなり、外部クライアントはこの実装フィールドに
+> 依存できません。旧イメージだけをロールバックしても、削除済みの過去値は復元されません。復元には
+> アップグレード前のデータベースバックアップも必要です。
+
 デプロイメント後：
 
 - Web管理インターフェースにアクセス：<http://localhost:3001>
@@ -128,7 +126,7 @@ docker compose pull && docker compose down && docker compose up -d
 
 ```bash
 # クローンとビルド
-git clone https://github.com/tbphp/gpt-load.git
+git clone https://github.com/zhangtyzzz/gpt-load.git
 cd gpt-load
 go mod tidy
 
@@ -159,7 +157,7 @@ make run
 - すべてのノードは同一の`AUTH_KEY`、`DATABASE_DSN`、`REDIS_DSN`を設定する必要があります
 - リーダー・フォロワーアーキテクチャで、フォロワーノードは環境変数を設定する必要があります：`IS_SLAVE=true`
 
-詳細については、[クラスターデプロイメントドキュメント](https://www.gpt-load.com/docs/cluster?lang=ja)を参照してください。
+クラスタ設定の詳細は、ソースコードとともにこのセクションで管理されています。
 
 ## 設定システム
 
@@ -607,7 +605,7 @@ response = client.messages.create(
 
 GPT-Loadに貢献してくださったすべての開発者に感謝します！
 
-[![Contributors](https://contrib.rocks/image?repo=tbphp/gpt-load)](https://github.com/tbphp/gpt-load/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=zhangtyzzz/gpt-load)](https://github.com/zhangtyzzz/gpt-load/graphs/contributors)
 
 ## ライセンス
 
@@ -615,4 +613,4 @@ MITライセンス - 詳細は[LICENSE](LICENSE)ファイルを参照してく�
 
 ## スター履歴
 
-[![Stargazers over time](https://starchart.cc/tbphp/gpt-load.svg?variant=adaptive)](https://starchart.cc/tbphp/gpt-load)
+[![Stargazers over time](https://starchart.cc/zhangtyzzz/gpt-load.svg?variant=adaptive)](https://starchart.cc/zhangtyzzz/gpt-load)

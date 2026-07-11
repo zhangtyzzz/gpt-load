@@ -2,7 +2,7 @@
 import { getDashboardChart, getGroupList } from "@/api/dashboard";
 import type { ChartData } from "@/types/models";
 import { getGroupDisplayName } from "@/utils/display";
-import { NSelect, NSpin } from "naive-ui";
+import { NButton, NSelect, NSpin } from "naive-ui";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -12,7 +12,7 @@ const { t } = useI18n();
 const chartData = ref<ChartData | null>(null);
 const selectedGroup = ref<number | null>(null);
 const loading = ref(true);
-const animationProgress = ref(0);
+const chartError = ref(false);
 const hoveredPoint = ref<{
   datasetIndex: number;
   pointIndex: number;
@@ -97,7 +97,7 @@ const visibleLabels = computed(() => {
 
   return labels
     .map((label, index) => ({ text: formatTimeLabel(label), index }))
-    .filter((_, i) => i % step === 1);
+    .filter(label => label.index % step === 0);
 });
 
 // 位置计算函数
@@ -213,40 +213,23 @@ const formatNumber = (value: number) => {
   return Math.round(value).toString();
 };
 
-const isErrorDataset = (label: string) => {
-  return label.includes("失败") || label.includes("Error") || label.includes("エラー");
-};
+const isErrorDataset = (datasetIndex: number) => datasetIndex === 1;
 
-// 动画相关
-const animatedStroke = ref("0");
-const animatedOffset = ref("0");
-
-const startAnimation = () => {
-  if (!chartData.value) {
-    return;
+const chartSummary = computed(() => {
+  const data = chartData.value;
+  if (!data) {
+    return t("charts.requestTrend24h");
   }
 
-  // 计算总路径长度（近似）
-  const totalLength = plotWidth + plotHeight;
-  animatedStroke.value = `${totalLength}`;
-  animatedOffset.value = `${totalLength}`;
+  const series = data.datasets.map(dataset => {
+    const points = dataset.data
+      .map((value, index) => `${formatTimeLabel(data.labels[index])} ${formatNumber(value)}`)
+      .join(", ");
+    return `${dataset.label}: ${points}`;
+  });
 
-  let start = 0;
-  const animate = (timestamp: number) => {
-    if (!start) {
-      start = timestamp;
-    }
-    const progress = Math.min((timestamp - start) / 1500, 1);
-
-    animatedOffset.value = `${totalLength * (1 - progress)}`;
-    animationProgress.value = progress;
-
-    if (progress < 1) {
-      requestAnimationFrame(animate);
-    }
-  };
-  requestAnimationFrame(animate);
-};
+  return `${t("charts.accessibleSummary", { points: data.labels.length })}. ${series.join("; ")}`;
+});
 
 // 鼠标交互
 const handleMouseMove = (event: MouseEvent) => {
@@ -344,14 +327,12 @@ const fetchGroups = async () => {
 const fetchChartData = async () => {
   try {
     loading.value = true;
+    chartError.value = false;
     const response = await getDashboardChart(selectedGroup.value || undefined);
     chartData.value = response.data;
-
-    // 延迟启动动画，确保DOM更新完成
-    setTimeout(() => {
-      startAnimation();
-    }, 100);
   } catch (error) {
+    chartData.value = null;
+    chartError.value = true;
     console.error("Failed to fetch chart data:", error);
   } finally {
     loading.value = false;
@@ -382,6 +363,8 @@ onMounted(() => {
         size="small"
         style="width: 150px"
         clearable
+        :loading="loading"
+        :aria-label="t('charts.allGroups')"
       />
     </div>
 
@@ -397,9 +380,13 @@ onMounted(() => {
           ref="chartSvg"
           viewBox="0 0 800 260"
           class="chart-svg"
+          role="img"
+          aria-labelledby="request-chart-title request-chart-description"
           @mousemove="handleMouseMove"
           @mouseleave="hideTooltip"
         >
+          <title id="request-chart-title">{{ t("charts.requestTrend24h") }}</title>
+          <desc id="request-chart-description">{{ chartSummary }}</desc>
           <!-- 背景网格 -->
           <defs>
             <pattern id="grid" width="40" height="30" patternUnits="userSpaceOnUse">
@@ -489,18 +476,18 @@ onMounted(() => {
               :d="generateAreaPath(dataset.data)"
               :fill="`url(#gradient-${datasetIndex})`"
               class="area-path"
-              :style="{ opacity: isErrorDataset(dataset.label) ? 0.3 : 0.6 }"
+              :style="{ opacity: isErrorDataset(datasetIndex) ? 0.3 : 0.6 }"
             />
 
             <!-- 主线条 -->
             <path
               :d="generateLinePath(dataset.data)"
               :stroke="dataset.color"
-              :stroke-width="isErrorDataset(dataset.label) ? 1 : 2"
+              :stroke-width="isErrorDataset(datasetIndex) ? 1 : 2"
               fill="none"
               class="line-path"
               :style="{
-                opacity: isErrorDataset(dataset.label) ? 0.75 : 1,
+                opacity: isErrorDataset(datasetIndex) ? 0.75 : 1,
                 filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.1))',
               }"
             />
@@ -511,7 +498,7 @@ onMounted(() => {
                 v-if="value > 0"
                 :cx="getXPosition(pointIndex)"
                 :cy="getYPosition(value)"
-                :r="isErrorDataset(dataset.label) ? 2 : 3"
+                :r="isErrorDataset(datasetIndex) ? 2 : 3"
                 :fill="dataset.color"
                 :stroke="dataset.color"
                 stroke-width="1"
@@ -519,7 +506,7 @@ onMounted(() => {
                 :class="{
                   'point-hover': hoveredPoint?.pointIndex === pointIndex,
                 }"
-                :style="{ opacity: isErrorDataset(dataset.label) ? 0.8 : 1 }"
+                :style="{ opacity: isErrorDataset(datasetIndex) ? 0.8 : 1 }"
               />
             </g>
           </g>
@@ -554,35 +541,29 @@ onMounted(() => {
           </div>
         </div>
       </div>
+      <p id="request-chart-data-summary" class="sr-only">{{ chartSummary }}</p>
     </div>
 
-    <div v-else class="chart-loading">
+    <div v-else-if="loading" class="chart-loading" aria-busy="true">
       <n-spin size="large" />
       <p>{{ t("common.loading") }}</p>
+    </div>
+
+    <div v-else class="chart-error" role="alert">
+      <p>{{ t("charts.loadFailed") }}</p>
+      <n-button size="small" @click="fetchChartData">{{ t("common.retry") }}</n-button>
     </div>
   </div>
 </template>
 
 <style scoped>
 .chart-container {
-  padding: 20px;
-  border-radius: 16px;
-  backdrop-filter: blur(4px);
+  padding: 1.25rem;
   border: 1px solid var(--border-color-light);
-}
-
-/* 浅色主题 - 保持原有的紫色渐变设计 */
-:root:not(.dark) .chart-container {
-  background: var(--primary-gradient);
-  color: white;
-}
-
-/* 暗黑主题 - 使用深蓝紫渐变外层背景 */
-:root.dark .chart-container {
-  background: linear-gradient(135deg, #525a7a 0%, #424964 100%);
-  box-shadow: var(--shadow-md);
-  border: 1px solid rgba(139, 157, 245, 0.2);
-  color: #e8e8e8;
+  border-radius: var(--border-radius-lg);
+  background: var(--card-bg-solid);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
 }
 
 .chart-header {
@@ -598,27 +579,12 @@ onMounted(() => {
 }
 
 .chart-title {
-  /* margin: 0 0 4px 0; */
-  font-size: 24px;
-  line-height: 28px;
-  font-weight: 600;
-}
-
-/* 浅色主题 - 白色渐变文字 */
-:root:not(.dark) .chart-title {
-  background: linear-gradient(45deg, #fff, #f0f0f0);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* 暗黑主题 - 白色文字 */
-:root.dark .chart-title {
-  color: white;
-  background: none;
-  -webkit-background-clip: unset;
-  -webkit-text-fill-color: unset;
-  background-clip: unset;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  line-height: 1.35;
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 
 .chart-subtitle {
@@ -627,22 +593,9 @@ onMounted(() => {
   font-weight: 400;
 }
 
-/* 浅色主题 */
-:root:not(.dark) .chart-subtitle {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-/* 暗黑主题 */
-:root.dark .chart-subtitle {
+.chart-subtitle {
   color: var(--text-secondary);
 }
-
-/* .chart-content {
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
-  padding: 12px;
-  color: #333;
-} */
 
 .chart-legend {
   position: absolute;
@@ -653,80 +606,34 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   gap: 12px;
-  padding: 2px;
-  backdrop-filter: blur(8px);
-  border-radius: 24px;
-}
-
-/* 浅色主题 */
-:root:not(.dark) .chart-legend {
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-}
-
-/* 暗黑主题 */
-:root.dark .chart-legend {
-  background: var(--overlay-bg);
-  border: 1px solid var(--border-color);
+  padding: 0.15rem;
+  border: 1px solid var(--border-color-light);
+  border-radius: 999px;
+  background: var(--chart-legend-bg);
+  box-shadow: var(--shadow-sm);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0.5rem;
   font-weight: 600;
   font-size: 13px;
-  padding: 8px 16px;
-  border-radius: 20px;
-  transition: all 0.2s ease;
+  padding: 0.4rem 0.65rem;
+  border-radius: 999px;
+  color: var(--chart-legend-text);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-/* 浅色主题 */
-:root:not(.dark) .legend-item {
-  color: #334155;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-}
-
-/* 暗黑主题 */
-:root.dark .legend-item {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-}
-
-/* 浅色主题悬停效果 */
-:root:not(.dark) .legend-item:hover {
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-/* 暗黑主题悬停效果 */
-:root.dark .legend-item:hover {
-  background: var(--primary-color);
-  color: white;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
+.legend-item:hover {
+  background: var(--hover-bg);
 }
 
 .legend-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  position: relative;
-}
-
-.legend-indicator::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 6px;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.3);
+  width: 0.55rem;
+  height: 0.55rem;
   border-radius: 50%;
 }
 
@@ -744,21 +651,8 @@ onMounted(() => {
 .chart-svg {
   width: 100%;
   height: auto;
-  border-radius: 8px;
-}
-
-/* 浅色主题 - 白色背景 */
-:root:not(.dark) .chart-svg {
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e0e0e0;
-}
-
-/* 暗黑主题 - 深色背景 */
-:root.dark .chart-svg {
-  background: var(--card-bg-solid);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--chart-bg);
 }
 
 .axis-label {
@@ -767,33 +661,19 @@ onMounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-.line-path {
-  transition: all 0.3s ease;
-}
-
 .area-path {
   opacity: 0.6;
-  transition: opacity 0.3s ease;
 }
 
 .data-point {
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
 .data-point:hover,
 .point-hover {
   r: 5;
   filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.3));
-}
-
-.data-point-zero {
-  cursor: default;
-  transition: opacity 0.2s ease;
-}
-
-.data-point-zero:hover {
-  opacity: 0.8;
 }
 
 .chart-tooltip {
@@ -806,9 +686,8 @@ onMounted(() => {
   pointer-events: none;
   transform: translateX(-50%) translateY(-100%);
   z-index: 1000;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-color-light);
   min-width: 140px;
   max-width: 220px;
 }
@@ -848,7 +727,16 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   height: 260px;
-  color: white;
+  color: var(--text-secondary);
+}
+
+.chart-error {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  align-content: center;
+  gap: 0.75rem;
+  color: var(--error-color);
 }
 
 .chart-loading p {
@@ -860,7 +748,7 @@ onMounted(() => {
 /* 响应式设计 */
 @media (max-width: 768px) {
   .chart-container {
-    padding: 16px;
+    padding: 1rem;
   }
 
   .chart-title {
@@ -897,9 +785,9 @@ onMounted(() => {
   .legend-item {
     padding: 4px 10px;
     font-size: 12px;
-    color: #333;
-    background: white;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color-light);
     gap: 6px;
   }
 
@@ -909,31 +797,17 @@ onMounted(() => {
   }
 }
 
-/* 动画效果 */
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+@media (prefers-reduced-transparency: reduce) {
+  .chart-legend {
+    background: var(--card-bg-solid);
+    backdrop-filter: none;
   }
 }
 
-.chart-container {
-  animation: fadeInUp 0.6s ease-out;
-}
-
-.legend-item {
-  animation: fadeInUp 0.6s ease-out;
-}
-
-.legend-item:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.legend-item:nth-child(3) {
-  animation-delay: 0.2s;
+@media (prefers-reduced-motion: reduce) {
+  .data-point,
+  .legend-item {
+    transition: none;
+  }
 }
 </style>

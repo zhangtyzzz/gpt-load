@@ -142,7 +142,7 @@ type Group struct {
 type APIKey struct {
 	ID           uint       `gorm:"primaryKey;autoIncrement;index:idx_api_keys_group_last_used_id,priority:3" json:"id"`
 	KeyValue     string     `gorm:"type:text;not null" json:"key_value"`
-	KeyHash      string     `gorm:"type:varchar(128);index" json:"key_hash"`
+	KeyHash      string     `gorm:"type:varchar(128);index" json:"-"`
 	GroupID      uint       `gorm:"not null;index;index:idx_api_keys_group_last_used_id,priority:1" json:"group_id"`
 	Status       string     `gorm:"type:varchar(50);not null;default:'active';index" json:"status"`
 	Notes        string     `gorm:"type:varchar(255);default:''" json:"notes"`
@@ -159,7 +159,8 @@ const (
 	RequestTypeFinal = "final"
 )
 
-// RequestLog 对应 request_logs 表
+// RequestLog 对应 request_logs 表. KeyValue is retained for API compatibility
+// but may contain only a non-reversible fingerprint; full credentials are forbidden.
 type RequestLog struct {
 	ID              string    `gorm:"type:varchar(36);primaryKey" json:"id"`
 	Timestamp       time.Time `gorm:"not null;index" json:"timestamp"`

@@ -1,11 +1,11 @@
-import i18n from "@/locales";
 import type { ApiResponse, Group, LogFilter, LogsResponse } from "@/types/models";
 import http from "@/utils/http";
 
 export const logApi = {
-  // 获取日志列表
+  // Filters may contain a complete upstream key. Keep them in a JSON body so
+  // credentials never enter browser history, proxy access logs, or URLs.
   getLogs: (params: LogFilter): Promise<ApiResponse<LogsResponse>> => {
-    return http.get("/logs", { params });
+    return http.post("/logs/search", params, { hideMessage: true });
   },
 
   // 获取分组列表（用于筛选）
@@ -14,33 +14,10 @@ export const logApi = {
   },
 
   // 导出日志
-  exportLogs: (params: Omit<LogFilter, "page" | "page_size">) => {
-    const authKey = localStorage.getItem("authKey");
-    if (!authKey) {
-      window.$message.error(i18n.global.t("auth.noAuthKeyFound"));
-      return;
-    }
-
-    const queryParams = new URLSearchParams(
-      Object.entries(params).reduce(
-        (acc, [key, value]) => {
-          if (value !== undefined && value !== null && value !== "") {
-            acc[key] = String(value);
-          }
-          return acc;
-        },
-        {} as Record<string, string>
-      )
-    );
-    queryParams.append("key", authKey);
-
-    const url = `${http.defaults.baseURL}/logs/export?${queryParams.toString()}`;
-
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `logs-${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  exportLogs: (params: Omit<LogFilter, "page" | "page_size">): Promise<Blob> => {
+    return http.post<Blob, Blob>("/logs/export", params, {
+      responseType: "blob",
+      hideMessage: true,
+    });
   },
 };

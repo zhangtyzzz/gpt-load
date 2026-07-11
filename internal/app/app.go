@@ -57,6 +57,25 @@ type AppParams struct {
 	DB                *gorm.DB
 }
 
+type masterKeyPoolLoader interface {
+	LoadKeysFromDB() error
+}
+
+// initializeMasterStorage rebuilds only the database-derived key-pool
+// projection. The Store also owns pending-durable logs and transient
+// coordination state, so normal startup must never call Store.Clear here.
+// Keeping this policy at a narrow lifecycle boundary makes the no-clear
+// invariant directly regression-testable with a guarded Store.
+func initializeMasterStorage(storage store.Store, keyPool masterKeyPoolLoader) error {
+	if storage == nil {
+		return fmt.Errorf("master storage is not configured")
+	}
+	if keyPool == nil {
+		return fmt.Errorf("master key pool is not configured")
+	}
+	return keyPool.LoadKeysFromDB()
+}
+
 // NewApp is the constructor for App, with dependencies injected by dig.
 func NewApp(params AppParams) *App {
 	return &App{
@@ -81,14 +100,10 @@ func (a *App) Start() error {
 		return fmt.Errorf("failed to initialize i18n: %w", err)
 	}
 	logrus.Info("i18n initialized successfully.")
-	
+
 	// Master 节点执行初始化
 	if a.configManager.IsMaster() {
 		logrus.Info("Starting as Master Node.")
-
-		if err := a.storage.Clear(); err != nil {
-			return fmt.Errorf("cache cleanup failed: %w", err)
-		}
 
 		// 数据库迁移
 		db.HandleLegacyIndexes(a.db)
@@ -114,27 +129,39 @@ func (a *App) Start() error {
 		}
 		logrus.Info("System settings initialized in DB.")
 
-		a.settingsManager.Initialize(a.storage, a.groupManager, a.configManager.IsMaster())
+		if err := a.settingsManager.Initialize(a.storage, a.groupManager, a.configManager.IsMaster()); err != nil {
+			return fmt.Errorf("failed to initialize system settings manager: %w", err)
+		}
 
-		// 从数据库加载密钥到 Redis
-		if err := a.keyPoolProvider.LoadKeysFromDB(); err != nil {
+		// Rebuild only the database-derived key pool. Pending logs, affinity,
+		// cooldowns, and task coordination in the shared Store must survive.
+		if err := initializeMasterStorage(a.storage, a.keyPoolProvider); err != nil {
 			return fmt.Errorf("failed to load keys into key pool: %w", err)
 		}
 		logrus.Debug("API keys loaded into Redis cache by master.")
 
-		// 仅 Master 节点启动的服务
-		a.requestLogService.Start()
-		a.logCleanupService.Start()
-		a.cronChecker.Start()
 	} else {
 		logrus.Info("Starting as Slave Node.")
-		a.settingsManager.Initialize(a.storage, a.groupManager, a.configManager.IsMaster())
+		if err := a.settingsManager.Initialize(a.storage, a.groupManager, a.configManager.IsMaster()); err != nil {
+			return fmt.Errorf("failed to initialize system settings manager: %w", err)
+		}
 	}
 
 	// 显示配置并启动所有后台服务
 	a.configManager.DisplayServerConfig()
 
-	a.groupManager.Initialize()
+	if err := a.groupManager.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize group manager: %w", err)
+	}
+
+	// Start master-only background services only after every fallible cache
+	// initialization has completed, so a startup error cannot leave workers
+	// running behind a server that never became ready.
+	if a.configManager.IsMaster() {
+		a.requestLogService.Start()
+		a.logCleanupService.Start()
+		a.cronChecker.Start()
+	}
 
 	// Create HTTP server
 	serverConfig := a.configManager.GetEffectiveServerConfig()
@@ -219,7 +246,9 @@ func (a *App) Stop(ctx context.Context) {
 	}
 
 	if a.storage != nil {
-		a.storage.Close()
+		if err := a.storage.Close(); err != nil {
+			logrus.WithError(err).Error("Failed to close storage")
+		}
 	}
 
 	logrus.Info("Server exited gracefully")

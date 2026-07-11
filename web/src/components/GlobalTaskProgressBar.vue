@@ -164,6 +164,7 @@ function getTaskTitle(): string {
           size="small"
           @click="handleClose"
           :title="t('task.hideProgress')"
+          :aria-label="t('task.hideProgress')"
         >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -199,21 +200,23 @@ function getTaskTitle(): string {
   background: var(--card-bg-solid);
   border-radius: var(--border-radius-md);
   box-shadow: var(--shadow-lg);
-  border: 1px solid var(--border-color);
-  animation: slideIn 0.3s ease-out;
+  border: 1px solid var(--border-color-light);
+  animation: slideIn var(--motion-normal) var(--ease-out);
 }
 
 @media (max-width: 768px) {
   .global-task-progress {
     bottom: 72px;
-    left: 50%;
-    transform: translateX(-50%);
+    right: max(1rem, env(safe-area-inset-right));
+    left: max(1rem, env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
   }
 }
 
 @keyframes slideIn {
   from {
-    transform: translateX(100%);
+    transform: translateY(0.5rem);
     opacity: 0;
   }
   to {
@@ -222,23 +225,12 @@ function getTaskTitle(): string {
   }
 }
 
-/* 暗黑模式特殊样式 */
-:root.dark .global-task-progress {
-  background: #323841; /* 浅灰色背景，比内容区域浅 */
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 :root.dark .progress-title {
   color: var(--text-primary);
 }
 
 :root.dark .progress-subtitle {
   color: var(--text-secondary);
-}
-
-:root.dark .progress-message {
-  background: rgba(102, 126, 234, 0.15);
-  color: var(--text-primary);
 }
 
 .progress-container {
@@ -271,6 +263,13 @@ function getTaskTitle(): string {
   }
   50% {
     transform: scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .global-task-progress,
+  .progress-icon {
+    animation: none;
   }
 }
 

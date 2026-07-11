@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"gpt-load/internal/config"
-	"gpt-load/internal/models"
-	"gpt-load/internal/store"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"gpt-load/internal/config"
+	"gpt-load/internal/models"
+	"gpt-load/internal/store"
+	"gpt-load/internal/utils"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -21,6 +24,13 @@ const (
 	RequestLogCachePrefix    = "request_log:"
 	PendingLogKeysSet        = "pending_log_keys"
 	DefaultLogFlushBatchSize = 200
+
+	// HistoricalKeyCleanupBatchSize stays below SQLite's commonly deployed
+	// parameter limit while still amortizing the two statements per batch.
+	HistoricalKeyCleanupBatchSize = 500
+	HistoricalKeyCleanupDelay     = 25 * time.Millisecond
+	HistoricalKeyCleanupRetryMin  = 250 * time.Millisecond
+	HistoricalKeyCleanupRetryMax  = 5 * time.Second
 )
 
 // RequestLogService is responsible for managing request logs.
@@ -28,9 +38,23 @@ type RequestLogService struct {
 	db              *gorm.DB
 	store           store.Store
 	settingsManager *config.SystemSettingsManager
-	stopChan        chan struct{}
 	wg              sync.WaitGroup
 	ticker          *time.Ticker
+
+	lifecycleOnce   sync.Once
+	startOnce       sync.Once
+	stopOnce        sync.Once
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+
+	// These knobs keep cleanup deterministic in tests without changing the
+	// production defaults. cleanupBatchCompleted must never be required for
+	// progress; notifications are therefore best-effort.
+	cleanupBatchSize      int
+	cleanupBatchDelay     time.Duration
+	cleanupRetryMin       time.Duration
+	cleanupRetryMax       time.Duration
+	cleanupBatchCompleted chan<- int64
 }
 
 // NewRequestLogService creates a new RequestLogService instance
@@ -39,17 +63,225 @@ func NewRequestLogService(db *gorm.DB, store store.Store, sm *config.SystemSetti
 		db:              db,
 		store:           store,
 		settingsManager: sm,
-		stopChan:        make(chan struct{}),
 	}
 }
 
 // Start initializes the service and starts the periodic flush routine
 func (s *RequestLogService) Start() {
-	s.wg.Add(1)
-	go s.runLoop()
+	s.initLifecycle()
+	s.startOnce.Do(func() {
+		// Legacy cleanup is deliberately independent from the request-log flush
+		// loop. In particular, Start must not block application readiness on a
+		// table-wide write lock for a large request_logs table.
+		s.wg.Add(2)
+		go s.runLoop(s.lifecycleCtx)
+		go s.runHistoricalKeyValueCleanup(s.lifecycleCtx)
+	})
 }
 
-func (s *RequestLogService) runLoop() {
+func (s *RequestLogService) initLifecycle() {
+	s.lifecycleOnce.Do(func() {
+		// #nosec G118 -- lifecycleCancel is retained on the service and invoked exactly once by Stop through stopOnce.
+		s.lifecycleCtx, s.lifecycleCancel = context.WithCancel(context.Background())
+	})
+}
+
+func (s *RequestLogService) historicalCleanupBatchSize() int {
+	if s.cleanupBatchSize > 0 {
+		return s.cleanupBatchSize
+	}
+	return HistoricalKeyCleanupBatchSize
+}
+
+func (s *RequestLogService) historicalCleanupBatchDelay() time.Duration {
+	if s.cleanupBatchDelay != 0 {
+		return s.cleanupBatchDelay
+	}
+	return HistoricalKeyCleanupDelay
+}
+
+func (s *RequestLogService) historicalCleanupRetryBounds() (time.Duration, time.Duration) {
+	minimum := s.cleanupRetryMin
+	if minimum <= 0 {
+		minimum = HistoricalKeyCleanupRetryMin
+	}
+	maximum := s.cleanupRetryMax
+	if maximum <= 0 {
+		maximum = HistoricalKeyCleanupRetryMax
+	}
+	if maximum < minimum {
+		maximum = minimum
+	}
+	return minimum, maximum
+}
+
+// purgeHistoricalKeyValueBatch first reads a bounded, stable page of rows and
+// then updates only legacy values from that page. Paging the primary key rather
+// than filtering key_value in SQL keeps every read bounded even after almost
+// the entire table has already been cleaned and key_value has no index. This
+// two-statement form works on SQLite, MySQL, and PostgreSQL without
+// vendor-specific UPDATE LIMIT syntax.
+func (s *RequestLogService) purgeHistoricalKeyValueBatch(
+	ctx context.Context,
+	afterID string,
+	batchSize int,
+) (nextID string, cleaned int64, done bool, err error) {
+	if batchSize <= 0 {
+		batchSize = HistoricalKeyCleanupBatchSize
+	}
+
+	query := s.db.WithContext(ctx).Model(&models.RequestLog{})
+	if afterID != "" {
+		query = query.Where("id > ?", afterID)
+	}
+
+	type cleanupRow struct {
+		ID       string
+		KeyValue string
+		KeyHash  string
+	}
+	rows := make([]cleanupRow, 0, batchSize)
+	if err := query.
+		Select("id", "key_value", "key_hash").
+		Order("id ASC").
+		Limit(batchSize).
+		Scan(&rows).Error; err != nil {
+		return afterID, 0, false, fmt.Errorf("select historical request-log batch: %w", err)
+	}
+	if len(rows) == 0 {
+		return afterID, 0, true, nil
+	}
+
+	nextID = rows[len(rows)-1].ID
+	legacyIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.KeyValue != "" && row.KeyValue != utils.KeyFingerprint(row.KeyHash) {
+			legacyIDs = append(legacyIDs, row.ID)
+		}
+	}
+	if len(legacyIDs) == 0 {
+		return nextID, 0, len(rows) < batchSize, nil
+	}
+
+	result := s.db.WithContext(ctx).
+		Model(&models.RequestLog{}).
+		Where("id IN ?", legacyIDs).
+		Update("key_value", "")
+	if result.Error != nil {
+		return afterID, 0, false, fmt.Errorf("update historical request-log batch: %w", result.Error)
+	}
+
+	return nextID, result.RowsAffected, len(rows) < batchSize, nil
+}
+
+// purgeHistoricalKeyValues completes one bounded sweep. It returns the count
+// already cleaned even if a later batch fails, allowing the retry loop to keep
+// accurate aggregate progress without logging row contents.
+func (s *RequestLogService) purgeHistoricalKeyValues(ctx context.Context) (int64, error) {
+	total, _, err := s.purgeHistoricalKeyValuesFrom(ctx, "")
+	return total, err
+}
+
+// purgeHistoricalKeyValuesFrom returns the last fully processed cursor even
+// when a later batch fails. The background retry loop can therefore resume at
+// the failed page instead of rescanning a large prefix of the table.
+func (s *RequestLogService) purgeHistoricalKeyValuesFrom(
+	ctx context.Context,
+	afterID string,
+) (total int64, lastID string, err error) {
+	lastID = afterID
+	batchSize := s.historicalCleanupBatchSize()
+
+	for {
+		nextID, cleaned, done, err := s.purgeHistoricalKeyValueBatch(ctx, lastID, batchSize)
+		total += cleaned
+		if err != nil {
+			return total, lastID, err
+		}
+		if cleaned > 0 && s.cleanupBatchCompleted != nil {
+			select {
+			case s.cleanupBatchCompleted <- cleaned:
+			default:
+			}
+		}
+		lastID = nextID
+		if done {
+			return total, lastID, nil
+		}
+		if !waitForCleanup(ctx, s.historicalCleanupBatchDelay()) {
+			return total, lastID, ctx.Err()
+		}
+	}
+}
+
+func (s *RequestLogService) runHistoricalKeyValueCleanup(ctx context.Context) {
+	defer s.wg.Done()
+
+	minimumRetryDelay, maximumRetryDelay := s.historicalCleanupRetryBounds()
+	retryDelay := minimumRetryDelay
+	var totalCleaned int64
+	var retryCount int64
+	cursor := ""
+
+	for {
+		cleaned, nextCursor, err := s.purgeHistoricalKeyValuesFrom(ctx, cursor)
+		totalCleaned += cleaned
+		cursor = nextCursor
+		if err == nil {
+			logrus.WithField("cleaned_count", totalCleaned).
+				Info("Historical request-log credential cleanup completed")
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if cleaned > 0 {
+			retryDelay = minimumRetryDelay
+		}
+
+		retryCount++
+		// Do not attach the database error: some drivers include statement
+		// parameters in error strings. Cleanup logs intentionally expose counts
+		// only and retry from the remaining eligible rows.
+		logrus.WithFields(logrus.Fields{
+			"cleaned_count": totalCleaned,
+			"retry_count":   retryCount,
+		}).Warn("Historical request-log credential cleanup will retry")
+
+		if !waitForCleanup(ctx, retryDelay) {
+			return
+		}
+		if retryDelay < maximumRetryDelay {
+			retryDelay *= 2
+			if retryDelay > maximumRetryDelay {
+				retryDelay = maximumRetryDelay
+			}
+		}
+	}
+}
+
+func waitForCleanup(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		runtime.Gosched()
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *RequestLogService) runLoop(ctx context.Context) {
 	defer s.wg.Done()
 
 	// Initial flush on start
@@ -75,7 +307,7 @@ func (s *RequestLogService) runLoop() {
 				logrus.Debugf("Request log write interval updated to: %v", interval)
 			}
 			s.flush()
-		case <-s.stopChan:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -83,7 +315,8 @@ func (s *RequestLogService) runLoop() {
 
 // Stop gracefully stops the RequestLogService
 func (s *RequestLogService) Stop(ctx context.Context) {
-	close(s.stopChan)
+	s.initLifecycle()
+	s.stopOnce.Do(s.lifecycleCancel)
 
 	done := make(chan struct{})
 	go func() {
@@ -104,6 +337,7 @@ func (s *RequestLogService) Stop(ctx context.Context) {
 func (s *RequestLogService) Record(log *models.RequestLog) error {
 	log.ID = uuid.NewString()
 	log.Timestamp = time.Now()
+	sanitizeRequestLog(log)
 
 	if s.settingsManager.GetSettings().RequestLogWriteIntervalMinutes == 0 {
 		return s.writeLogsToDB([]*models.RequestLog{log})
@@ -200,6 +434,12 @@ func (s *RequestLogService) flush() {
 func (s *RequestLogService) writeLogsToDB(logs []*models.RequestLog) error {
 	if len(logs) == 0 {
 		return nil
+	}
+	// This also covers legacy pending entries loaded from Redis. They bypass
+	// Record during startup flush and may have been created by a version that
+	// cached reversible key values.
+	for _, log := range logs {
+		sanitizeRequestLog(log)
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
@@ -329,4 +569,17 @@ func (s *RequestLogService) writeLogsToDB(logs []*models.RequestLog) error {
 
 		return nil
 	})
+}
+
+func sanitizeRequestLog(log *models.RequestLog) {
+	if log == nil {
+		return
+	}
+	// Defense in depth for every caller: persist only the fingerprint derived
+	// from the one-way hash, never a supplied credential.
+	log.KeyValue = utils.KeyFingerprint(log.KeyHash)
+	log.RequestPath = utils.SanitizeText(log.RequestPath)
+	log.UpstreamAddr = utils.SanitizeText(log.UpstreamAddr)
+	log.ErrorMessage = utils.SanitizeText(log.ErrorMessage)
+	log.RequestBody = utils.SanitizeText(log.RequestBody)
 }

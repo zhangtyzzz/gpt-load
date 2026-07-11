@@ -1,6 +1,7 @@
 package keypool
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"gpt-load/internal/encryption"
@@ -9,12 +10,177 @@ import (
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
 	"gpt-load/internal/types"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+type failingRandomReader struct{}
+
+func (failingRandomReader) Read([]byte) (int, error) {
+	return 0, errors.New("random source unavailable")
+}
+
+func TestSecureRandomDuration(t *testing.T) {
+	t.Run("bounded deterministic sample", func(t *testing.T) {
+		const maximum = 100 * time.Millisecond
+		jitter, err := secureRandomDuration(bytes.NewReader(make([]byte, 32)), maximum)
+		if err != nil {
+			t.Fatalf("secureRandomDuration: %v", err)
+		}
+		if jitter < 0 || jitter >= maximum {
+			t.Fatalf("jitter = %v, want value in [0, %v)", jitter, maximum)
+		}
+	})
+
+	t.Run("non-positive maximum needs no randomness", func(t *testing.T) {
+		jitter, err := secureRandomDuration(failingRandomReader{}, 0)
+		if err != nil || jitter != 0 {
+			t.Fatalf("secureRandomDuration = (%v, %v), want (0, nil)", jitter, err)
+		}
+	})
+
+	t.Run("reader failure is returned", func(t *testing.T) {
+		jitter, err := secureRandomDuration(failingRandomReader{}, time.Second)
+		if err == nil || jitter != 0 {
+			t.Fatalf("secureRandomDuration = (%v, %v), want (0, error)", jitter, err)
+		}
+	})
+}
+
+func TestLoadKeysFromDBRebuildsListsWithoutClearingTransientState(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test DB: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Group{}, &models.APIKey{}); err != nil {
+		t.Fatalf("failed to migrate test DB: %v", err)
+	}
+
+	groups := []models.Group{
+		{
+			Name:               "active-group",
+			GroupType:          "standard",
+			Upstreams:          datatypes.JSON([]byte("[]")),
+			ValidationEndpoint: "/v1/models",
+			ChannelType:        "openai",
+			TestModel:          "test-model",
+		},
+		{
+			Name:               "empty-group",
+			GroupType:          "standard",
+			Upstreams:          datatypes.JSON([]byte("[]")),
+			ValidationEndpoint: "/v1/models",
+			ChannelType:        "openai",
+			TestModel:          "test-model",
+		},
+	}
+	if err := db.Create(&groups).Error; err != nil {
+		t.Fatalf("failed to create groups: %v", err)
+	}
+
+	apiKey := models.APIKey{
+		GroupID:  groups[0].ID,
+		KeyValue: "sk-rebuild-test",
+		KeyHash:  "rebuild-test-hash",
+		Status:   models.KeyStatusActive,
+	}
+	if err := db.Create(&apiKey).Error; err != nil {
+		t.Fatalf("failed to create API key: %v", err)
+	}
+
+	memStore := store.NewMemoryStore()
+	if err := memStore.LPush(fmt.Sprintf("group:%d:active_keys", groups[0].ID), 999); err != nil {
+		t.Fatalf("failed to seed active group list: %v", err)
+	}
+	if err := memStore.LPush(fmt.Sprintf("group:%d:active_keys", groups[1].ID), 888); err != nil {
+		t.Fatalf("failed to seed empty group list: %v", err)
+	}
+	preservedKeys := []string{
+		"request_log:pending",
+		"pending_log_keys",
+		"global_task",
+		"affinity:1:user",
+		fmt.Sprintf("key:%d:cooldown", apiKey.ID),
+	}
+	for _, key := range preservedKeys {
+		if err := memStore.Set(key, []byte("preserve"), time.Hour); err != nil {
+			t.Fatalf("failed to seed preserved key %q: %v", key, err)
+		}
+	}
+
+	encryptor, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("failed to create encryption service: %v", err)
+	}
+	provider := NewProvider(db, memStore, nil, encryptor, nil)
+	if err := provider.LoadKeysFromDB(); err != nil {
+		t.Fatalf("LoadKeysFromDB() error = %v", err)
+	}
+
+	if got, err := memStore.LLen(fmt.Sprintf("group:%d:active_keys", groups[0].ID)); err != nil || got != 1 {
+		t.Fatalf("active group list length = %d, err = %v; want 1, nil", got, err)
+	}
+	selectedID, err := memStore.Rotate(fmt.Sprintf("group:%d:active_keys", groups[0].ID))
+	if err != nil {
+		t.Fatalf("failed to read rebuilt active list: %v", err)
+	}
+	if selectedID != strconv.FormatUint(uint64(apiKey.ID), 10) {
+		t.Fatalf("rebuilt active key ID = %q, want %d", selectedID, apiKey.ID)
+	}
+	if got, err := memStore.LLen(fmt.Sprintf("group:%d:active_keys", groups[1].ID)); err != nil || got != 0 {
+		t.Fatalf("empty group list length = %d, err = %v; want 0, nil", got, err)
+	}
+	for _, key := range preservedKeys {
+		if exists, err := memStore.Exists(key); err != nil || !exists {
+			t.Errorf("preserved key %q exists = %v, err = %v; want true, nil", key, exists, err)
+		}
+	}
+}
+
+func TestSelectKeyWithAffinityRejectsStaleHashOutsideActiveList(t *testing.T) {
+	t.Parallel()
+
+	memStore := store.NewMemoryStore()
+	encryptor, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("failed to create encryption service: %v", err)
+	}
+	affinityManager := NewAffinityManager(memStore)
+	provider := NewProvider(nil, memStore, nil, encryptor, affinityManager)
+
+	const groupID uint = 7
+	staleKey := &models.APIKey{ID: 11, GroupID: groupID, KeyValue: "sk-stale", Status: models.KeyStatusActive}
+	activeKey := &models.APIKey{ID: 12, GroupID: groupID, KeyValue: "sk-active", Status: models.KeyStatusActive}
+	if err := memStore.HSet(fmt.Sprintf("key:%d", staleKey.ID), provider.apiKeyToMap(staleKey)); err != nil {
+		t.Fatalf("failed to seed stale key hash: %v", err)
+	}
+	if err := memStore.HSet(fmt.Sprintf("key:%d", activeKey.ID), provider.apiKeyToMap(activeKey)); err != nil {
+		t.Fatalf("failed to seed active key hash: %v", err)
+	}
+	if err := memStore.LPush(fmt.Sprintf("group:%d:active_keys", groupID), activeKey.ID); err != nil {
+		t.Fatalf("failed to seed active list: %v", err)
+	}
+
+	affinityHash := ComputeAffinityHash("sticky-user")
+	if err := affinityManager.SetMapping(groupID, affinityHash, staleKey.ID, time.Hour); err != nil {
+		t.Fatalf("failed to seed stale affinity mapping: %v", err)
+	}
+
+	selected, err := provider.SelectKeyWithAffinity(groupID, affinityHash)
+	if err != nil {
+		t.Fatalf("SelectKeyWithAffinity() error = %v", err)
+	}
+	if selected.ID != activeKey.ID {
+		t.Fatalf("selected key ID = %d, want active-list key %d", selected.ID, activeKey.ID)
+	}
+}
 
 func TestApplyHealthActionNoop(t *testing.T) {
 	provider, memStore, db := newHealthActionTestProvider(t)

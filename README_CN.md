@@ -2,35 +2,15 @@
 
 [English](README.md) | 中文 | [日本語](README_JP.md)
 
-[![Release](https://img.shields.io/github/v/release/tbphp/gpt-load)](https://github.com/tbphp/gpt-load/releases)
-![Go Version](https://img.shields.io/badge/Go-1.24+-blue.svg)
+[![Release](https://img.shields.io/github/v/release/zhangtyzzz/gpt-load)](https://github.com/zhangtyzzz/gpt-load/releases)
+![Go Version](https://img.shields.io/badge/Go-1.25+-blue.svg)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 一个高性能、企业级的 AI 接口透明代理服务，专门为需要集成多种 AI 服务的企业和开发者设计。采用 Go 语言开发，具备智能密钥管理、负载均衡和完善的监控功能，专为高并发生产环境而设计。
 
-详细请查看[官方文档](https://www.gpt-load.com/docs?lang=zh)
-
-<a href="https://trendshift.io/repositories/14880" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14880" alt="tbphp%2Fgpt-load | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-<a href="https://hellogithub.com/repository/tbphp/gpt-load" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=554dc4c46eb14092b9b0c56f1eb9021c&claim_uid=Qlh8vzrWJ0HCneG" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-
-## 赞助商
-
-<table>
-<tbody>
-<tr>
-<td width="180"><a href="https://unity2.ai/register?source=gptload"><img src="./screenshot/unity2ai.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>感谢 Unity2.ai 赞助了本项目！Unity2.ai 是面向个人开发者、团队和企业的高性能 AI 模型 API 中转平台，长期服务国内头部企业，日均承载超 300 亿 token 调用，支持 5000 RPM 级高并发。支持余额计费、首充赠额、组合订阅、企业开票和专属对接。通过<a href="https://unity2.ai/register?source=gptload">此链接</a>注册可领取 $2 余额，加入官方群再送 $10 余额，最高可领 $12 免费额度。</td>
-</tr>
-<tr>
-<td width="180"><a href="https://linux.do"><img src="./screenshot/l.png" alt="LINUX DO" width="150"></a></td>
-<td>非常感谢 LINUX DO 社区的支持！</td>
-</tr>
-<tr>
-<td width="180"><a href="https://www.digitalocean.com/?refcode=3d52cff21342&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge"><img src="https://web-platforms.sfo2.cdn.digitaloceanspaces.com/WWW/Badge%202.svg" alt="DigitalOcean Referral Badge" width="150"></a></td>
-<td>本项目由 DigitalOcean 支持。</td>
-</tr>
-</tbody>
-</table>
+本独立发行版由
+[`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load) 持续维护。项目文档、
+版本说明和支持渠道均以该仓库为准。
 
 ## 功能特性
 
@@ -58,7 +38,7 @@ GPT-Load 作为透明代理服务，完整保留各 AI 服务商的原生 API �
 
 ### 环境要求
 
-- Go 1.24+ (源码构建)
+- Go 1.25+ (源码构建)
 - Docker (容器化部署)
 - MySQL, PostgreSQL, 或 SQLite (数据库存储)
 - Redis (缓存和分布式协调，可选)
@@ -70,7 +50,7 @@ docker run -d --name gpt-load \
     -p 3001:3001 \
     -e AUTH_KEY=your-secure-key-here \
     -v "$(pwd)/data":/app/data \
-    ghcr.io/tbphp/gpt-load:latest
+    ghcr.io/zhangtyzzz/gpt-load:latest
 ```
 
 > 请将 `your-secure-key-here` 改为强密码（决不能使用默认值），即可登录管理界面：<http://localhost:3001>
@@ -84,8 +64,8 @@ docker run -d --name gpt-load \
 mkdir -p gpt-load && cd gpt-load
 
 # 下载配置文件
-wget https://raw.githubusercontent.com/tbphp/gpt-load/refs/heads/main/docker-compose.yml
-wget -O .env https://raw.githubusercontent.com/tbphp/gpt-load/refs/heads/main/.env.example
+wget https://raw.githubusercontent.com/zhangtyzzz/gpt-load/refs/heads/main/docker-compose.yml
+wget -O .env https://raw.githubusercontent.com/zhangtyzzz/gpt-load/refs/heads/main/.env.example
 
 # 编辑 .env 文件，修改AUTH_KEY为强密码，绝不使用 sk-123456 等默认或者简单密钥
 
@@ -115,6 +95,21 @@ docker compose down && docker compose up -d
 docker compose pull && docker compose down && docker compose up -d
 ```
 
+> [!IMPORTANT]
+> **v1.6.0-beta.1 升级提示：**升级前请备份数据库，并固定使用精确镜像
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.1`，不要使用会移动的 `beta`
+> 标签。首次启动会在后台小批量、不可逆地清理历史
+> `request_logs.key_value` 可逆值。使用完整 Key 搜索请求日志的旧客户端需从
+> GET 查询参数迁移到 `POST /api/logs/search` 或 `POST /api/logs/export`；普通
+> GET 筛选和 `fp:*` 指纹搜索不受影响。Key 管理中的完整 Key 搜索也需迁移到
+> `POST /api/keys/search`，JSON 请求体传入 `group_id`、可选 `status` 和
+> `key_value`；普通 GET 列表及状态筛选仍兼容。请求日志 API 的 `key_value`
+> 现在只返回 `fp:*` 指纹；CSV 列名从 `key_value` 改为 `key_identifier`，同样
+> 只返回指纹，不再返回完整 Key。Key 管理中的全部、
+> 有效及无效 Key 导出仍会提供完整 Key。Key API 不再序列化内部 `key_hash`，
+> 外部客户端不应依赖该内部字段。仅回滚旧镜像不会恢复已清理的历史值；
+> 如需恢复，必须同时恢复升级前的数据库备份。
+
 部署完成后：
 
 - 访问 Web 管理界面：<http://localhost:3001>
@@ -128,7 +123,7 @@ docker compose pull && docker compose down && docker compose up -d
 
 ```bash
 # 克隆并构建
-git clone https://github.com/tbphp/gpt-load.git
+git clone https://github.com/zhangtyzzz/gpt-load.git
 cd gpt-load
 go mod tidy
 
@@ -159,7 +154,7 @@ make run
 - 所有节点必须配置相同的 `AUTH_KEY`、`DATABASE_DSN`、`REDIS_DSN`
 - 一主多从架构，从节点必须配置环境变量：`IS_SLAVE=true`
 
-详细请参考[集群部署文档](https://www.gpt-load.com/docs/cluster?lang=zh)
+完整的集群配置说明由本节随源代码同步维护。
 
 ## 配置系统
 
@@ -607,7 +602,7 @@ response = client.messages.create(
 
 感谢所有为 GPT-Load 做出贡献的开发者们！
 
-[![Contributors](https://contrib.rocks/image?repo=tbphp/gpt-load)](https://github.com/tbphp/gpt-load/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=zhangtyzzz/gpt-load)](https://github.com/zhangtyzzz/gpt-load/graphs/contributors)
 
 ## 许可证
 
@@ -615,4 +610,4 @@ MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
 
 ## Star History
 
-[![Stargazers over time](https://starchart.cc/tbphp/gpt-load.svg?variant=adaptive)](https://starchart.cc/tbphp/gpt-load)
+[![Stargazers over time](https://starchart.cc/zhangtyzzz/gpt-load.svg?variant=adaptive)](https://starchart.cc/zhangtyzzz/gpt-load)

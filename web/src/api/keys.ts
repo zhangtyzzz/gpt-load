@@ -1,4 +1,3 @@
-import i18n from "@/locales";
 import type {
   APIKey,
   Group,
@@ -92,7 +91,23 @@ export const keysApi = {
       total_pages: number;
     };
   }> {
-    const res = await http.get("/keys", { params });
+    const { key_value, page, page_size, ...filters } = params;
+    const pagination = { page, page_size };
+    const searchKey = key_value?.trim();
+
+    // A complete upstream key is a credential. Exact searches use a POST body
+    // so the value never appears in URLs, browser history, referrers, or access
+    // logs. Ordinary non-sensitive listing remains a GET request.
+    const res = searchKey
+      ? await http.post(
+          "/keys/search",
+          { ...filters, key_value: searchKey },
+          { params: pagination, hideMessage: true }
+        )
+      : await http.get("/keys", {
+          params: { ...filters, ...pagination },
+          hideMessage: true,
+        });
     return res.data;
   },
 
@@ -228,30 +243,31 @@ export const keysApi = {
   },
 
   // 导出密钥
-  exportKeys(groupId: number, status: "all" | "active" | "invalid" = "all"): void {
-    const authKey = localStorage.getItem("authKey");
-    if (!authKey) {
-      window.$message.error(i18n.global.t("auth.noAuthKeyFound"));
-      return;
-    }
-
-    const params = new URLSearchParams({
-      group_id: groupId.toString(),
-      key: authKey,
+  async exportKeys(groupId: number, status: "all" | "active" | "invalid" = "all"): Promise<void> {
+    // Authentication is supplied by the shared Axios interceptor. Fetching a
+    // Blob avoids placing the console credential in the query string.
+    const blob = await http.get<Blob, Blob>("/keys/export", {
+      params: {
+        group_id: groupId,
+        ...(status === "all" ? {} : { status }),
+      },
+      responseType: "blob",
+      hideMessage: true,
     });
-
-    if (status !== "all") {
-      params.append("status", status);
-    }
-
-    const url = `${http.defaults.baseURL}/keys/export?${params.toString()}`;
-
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `keys-group_${groupId}-${status}-${Date.now()}.txt`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+    try {
+      link.href = objectUrl;
+      link.setAttribute("download", `keys-group_${groupId}-${status}-${Date.now()}.txt`);
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      link.remove();
+      // Revoke in the next task so Safari and slower browsers have started
+      // consuming the object URL before it becomes invalid.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
   },
 
   // 验证分组密钥

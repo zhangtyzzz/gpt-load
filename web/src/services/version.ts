@@ -98,7 +98,7 @@ class VersionService {
   private async fetchLatestVersion(): Promise<GitHubRelease | null> {
     try {
       const response = await axios.get(
-        "https://api.github.com/repos/tbphp/gpt-load/releases/latest",
+        "https://api.github.com/repos/zhangtyzzz/gpt-load/releases/latest",
         {
           timeout: 10000,
           headers: {

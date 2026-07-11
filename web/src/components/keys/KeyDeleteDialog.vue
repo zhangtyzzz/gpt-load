@@ -2,7 +2,7 @@
 import { keysApi } from "@/api/keys";
 import { appState } from "@/utils/app-state";
 import { Close } from "@vicons/ionicons5";
-import { NButton, NCard, NInput, NModal } from "naive-ui";
+import { NButton, NCard, NIcon, NInput, NModal } from "naive-ui";
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -70,7 +70,7 @@ async function handleSubmit() {
 <template>
   <n-modal :show="show" @update:show="handleClose" class="form-modal">
     <n-card
-      style="width: 800px"
+      class="form-modal-card"
       :title="t('keys.deleteKeysFromGroup', { group: groupName || t('keys.currentGroup') })"
       :bordered="false"
       size="huge"
@@ -78,7 +78,7 @@ async function handleSubmit() {
       aria-modal="true"
     >
       <template #header-extra>
-        <n-button quaternary circle @click="handleClose">
+        <n-button quaternary circle :aria-label="t('common.close')" @click="handleClose">
           <template #icon>
             <n-icon :component="Close" />
           </template>
@@ -90,11 +90,11 @@ async function handleSubmit() {
         type="textarea"
         :placeholder="t('keys.enterKeysToDeletePlaceholder')"
         :rows="8"
-        style="margin-top: 20px"
+        class="modal-input"
       />
 
       <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 12px">
+        <div class="modal-footer">
           <n-button @click="handleClose">{{ t("common.cancel") }}</n-button>
           <n-button type="error" @click="handleSubmit" :loading="loading" :disabled="!keysText">
             {{ t("common.delete") }}
@@ -106,26 +106,64 @@ async function handleSubmit() {
 </template>
 
 <style scoped>
-.form-modal {
-  --n-color: rgba(255, 255, 255, 0.95);
+.form-modal-card {
+  display: flex;
+  width: min(800px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  flex-direction: column;
+  overflow: hidden;
 }
 
 :deep(.n-input) {
-  --n-border-radius: 6px;
+  --n-border-radius: var(--border-radius-sm);
 }
 
 :deep(.n-card-header) {
-  border-bottom: 1px solid rgba(239, 239, 245, 0.8);
-  padding: 10px 20px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-color-light);
 }
 
 :deep(.n-card__content) {
-  max-height: calc(100vh - 68px - 61px - 50px);
+  min-height: 0;
   overflow-y: auto;
 }
 
 :deep(.n-card__footer) {
-  border-top: 1px solid rgba(239, 239, 245, 0.8);
-  padding: 10px 15px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color-light);
+}
+
+.modal-input {
+  margin-top: var(--space-5);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 768px) {
+  .form-modal-card {
+    width: min(800px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1rem);
+  }
+
+  :deep(.n-card-header),
+  :deep(.n-card__content),
+  :deep(.n-card__footer) {
+    padding-inline: var(--space-3);
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-footer :deep(.n-button) {
+    min-height: 44px;
+  }
 }
 </style>

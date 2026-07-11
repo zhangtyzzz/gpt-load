@@ -78,6 +78,15 @@ type ValidateGroupKeysRequest struct {
 	Status  string `json:"status,omitempty"`
 }
 
+// SearchKeysRequest defines an exact key search. The key value intentionally
+// lives in a JSON body so it cannot leak through URLs, browser history, reverse
+// proxy access logs, or referrer headers.
+type SearchKeysRequest struct {
+	GroupID  uint   `json:"group_id" binding:"required"`
+	Status   string `json:"status,omitempty"`
+	KeyValue string `json:"key_value" binding:"required"`
+}
+
 // AddMultipleKeys handles creating new keys from a text block within a specific group.
 func (s *Server) AddMultipleKeys(c *gin.Context) {
 	var req KeyTextRequest
@@ -192,25 +201,45 @@ func (s *Server) AddMultipleKeysAsync(c *gin.Context) {
 
 // ListKeysInGroup handles listing all keys within a specific group with pagination.
 func (s *Server) ListKeysInGroup(c *gin.Context) {
+	// Full upstream credentials are forbidden in GET query strings. Keep the
+	// endpoint for non-sensitive listing and direct exact searches to POST.
+	if c.Query("key_value") != "" {
+		response.ErrorI18nFromAPIError(c, app_errors.ErrBadRequest, "validation.key_search_requires_post")
+		return
+	}
+
 	groupID, ok := validateGroupIDFromQuery(c)
 	if !ok {
 		return
 	}
 
+	s.listKeysInGroup(c, groupID, c.Query("status"), "")
+}
+
+// SearchKeysInGroup handles exact full-key searches using a JSON request body.
+func (s *Server) SearchKeysInGroup(c *gin.Context) {
+	var req SearchKeysRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, app_errors.NewAPIError(app_errors.ErrInvalidJSON, err.Error()))
+		return
+	}
+
+	req.KeyValue = strings.TrimSpace(req.KeyValue)
+	if !validateKeysText(c, req.KeyValue) {
+		return
+	}
+
+	s.listKeysInGroup(c, req.GroupID, req.Status, s.EncryptionSvc.Hash(req.KeyValue))
+}
+
+func (s *Server) listKeysInGroup(c *gin.Context, groupID uint, statusFilter string, searchHash string) {
 	if _, ok := s.findGroupByID(c, groupID); !ok {
 		return
 	}
 
-	statusFilter := c.Query("status")
 	if statusFilter != "" && statusFilter != models.KeyStatusActive && statusFilter != models.KeyStatusInvalid {
 		response.ErrorI18nFromAPIError(c, app_errors.ErrValidation, "validation.invalid_status_filter")
 		return
-	}
-
-	searchKeyword := c.Query("key_value")
-	searchHash := ""
-	if searchKeyword != "" {
-		searchHash = s.EncryptionSvc.Hash(searchKeyword)
 	}
 
 	query := s.KeyService.ListKeysInGroupQuery(groupID, statusFilter, searchHash)

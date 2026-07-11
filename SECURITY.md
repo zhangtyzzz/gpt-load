@@ -2,20 +2,32 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes are released for the latest stable version of
+[`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load/releases). Older
+versions and pre-release builds receive fixes on a best-effort basis only.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| --- | --- |
+| Latest stable release | Yes |
+| Older releases | No |
+| Pre-release builds | Best effort |
 
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Please report suspected vulnerabilities privately through
+[GitHub Security Advisories](https://github.com/zhangtyzzz/gpt-load/security/advisories/new).
+Do not include credentials, exploit details, or other sensitive information in
+a public issue.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Include the affected version, deployment mode, reproduction steps, expected
+impact, and any suggested mitigation. Maintainers will acknowledge the report,
+evaluate its severity and affected versions, and coordinate a fix and disclosure
+with the reporter. Response and release timing depend on severity and the scope
+of the required change.
+
+## Security Update Channel
+
+Security fixes and upgrade guidance are published in this repository's
+[releases](https://github.com/zhangtyzzz/gpt-load/releases). Deployments should
+pin a released version and regularly review release notes instead of relying on
+an unpinned development build.

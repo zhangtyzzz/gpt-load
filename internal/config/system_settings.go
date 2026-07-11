@@ -100,7 +100,11 @@ func (sm *SystemSettingsManager) Initialize(store store.Store, gm groupManager, 
 		if !isMaster {
 			return
 		}
-		gm.Invalidate()
+		if err := gm.Invalidate(); err != nil {
+			// The initial settings load runs before GroupManager initialization;
+			// later failures are retried by the next cross-node invalidation.
+			logrus.WithError(err).Debug("Group cache invalidation skipped after settings reload")
+		}
 	}
 
 	syncer, err := syncer.NewCacheSyncer(
@@ -160,11 +164,19 @@ func (sm *SystemSettingsManager) EnsureSettingsInitialized(authConfig types.Auth
 				logrus.Errorf("Failed to initialize setting %s: %v", setting.SettingKey, err)
 				return err
 			}
-			logrus.Infof("Initialized system setting: %s = %s", setting.SettingKey, setting.SettingValue)
+			logInitializedSystemSetting(setting.SettingKey, setting.SettingValue)
 		}
 	}
 
 	return nil
+}
+
+func logInitializedSystemSetting(key, _ string) {
+	if utils.IsSensitiveName(key) {
+		logrus.Infof("Initialized sensitive system setting: %s (value redacted)", key)
+		return
+	}
+	logrus.Infof("Initialized system setting: %s", key)
 }
 
 // GetSettings 获取当前系统配置

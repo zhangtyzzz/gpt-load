@@ -42,8 +42,8 @@ export interface HeaderRule {
 // 亲和性规则相关类型
 export interface AffinityKeySource {
   type: "header" | "body_json" | "body_regex";
-  key?: string;     // Header name (for type "header")
-  path?: string;    // JSON path (for type "body_json")
+  key?: string; // Header name (for type "header")
+  path?: string; // JSON path (for type "body_json")
   pattern?: string; // Regex pattern (for type "body_regex")
 }
 

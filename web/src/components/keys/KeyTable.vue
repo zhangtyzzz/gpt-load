@@ -16,15 +16,18 @@ import {
   Search,
 } from "@vicons/ionicons5";
 import {
+  NAlert,
   NButton,
+  NButtonGroup,
   NDropdown,
   NEmpty,
   NIcon,
   NInput,
+  NInputGroup,
   NModal,
   NSelect,
-  NSpace,
   NSpin,
+  NTag,
   useDialog,
   type MessageReactive,
 } from "naive-ui";
@@ -47,6 +50,7 @@ const props = defineProps<Props>();
 
 const keys = ref<KeyRow[]>([]);
 const loading = ref(false);
+const loadError = ref(false);
 const searchText = ref("");
 const statusFilter = ref<"all" | "active" | "invalid">("all");
 const currentPage = ref(1);
@@ -97,6 +101,7 @@ const deleteDialogShow = ref(false);
 const notesDialogShow = ref(false);
 const editingKey = ref<KeyRow | null>(null);
 const editingNotes = ref("");
+let latestLoadRequest = 0;
 
 watch(
   () => props.selectedGroup,
@@ -191,12 +196,20 @@ function handleMoreAction(key: string) {
 }
 
 async function loadKeys() {
+  const requestId = ++latestLoadRequest;
+
   if (!props.selectedGroup?.id) {
+    keys.value = [];
+    total.value = 0;
+    totalPages.value = 0;
+    loadError.value = false;
+    loading.value = false;
     return;
   }
 
   try {
     loading.value = true;
+    loadError.value = false;
     const result = await keysApi.getGroupKeys({
       group_id: props.selectedGroup.id,
       page: currentPage.value,
@@ -204,11 +217,28 @@ async function loadKeys() {
       status: statusFilter.value === "all" ? undefined : (statusFilter.value as KeyStatus),
       key_value: searchText.value.trim() || undefined,
     });
+
+    if (requestId !== latestLoadRequest) {
+      return;
+    }
+
     keys.value = result.items as KeyRow[];
     total.value = result.pagination.total_items;
     totalPages.value = result.pagination.total_pages;
+  } catch (_error) {
+    if (requestId !== latestLoadRequest) {
+      return;
+    }
+
+    keys.value = [];
+    total.value = 0;
+    totalPages.value = 0;
+    loadError.value = true;
+    console.error("Load keys failed");
   } finally {
-    loading.value = false;
+    if (requestId === latestLoadRequest) {
+      loading.value = false;
+    }
   }
 }
 
@@ -431,7 +461,12 @@ async function copyAllKeys() {
     return;
   }
 
-  keysApi.exportKeys(props.selectedGroup.id, "all");
+  try {
+    await keysApi.exportKeys(props.selectedGroup.id, "all");
+  } catch (error) {
+    console.error("Export keys failed");
+    showExportError(error);
+  }
 }
 
 async function copyValidKeys() {
@@ -439,7 +474,12 @@ async function copyValidKeys() {
     return;
   }
 
-  keysApi.exportKeys(props.selectedGroup.id, "active");
+  try {
+    await keysApi.exportKeys(props.selectedGroup.id, "active");
+  } catch (error) {
+    console.error("Export keys failed");
+    showExportError(error);
+  }
 }
 
 async function copyInvalidKeys() {
@@ -447,7 +487,17 @@ async function copyInvalidKeys() {
     return;
   }
 
-  keysApi.exportKeys(props.selectedGroup.id, "invalid");
+  try {
+    await keysApi.exportKeys(props.selectedGroup.id, "invalid");
+  } catch (error) {
+    console.error("Export keys failed");
+    showExportError(error);
+  }
+}
+
+function showExportError(error: unknown) {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status;
+  window.$message.error(status ? t("common.requestFailed", { status }) : t("common.networkError"));
 }
 
 async function restoreAllInvalid() {
@@ -625,13 +675,24 @@ function resetPage() {
     <!-- 工具栏 -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <n-button type="success" size="small" @click="createDialogShow = true">
+        <n-button
+          type="primary"
+          size="small"
+          :disabled="!selectedGroup"
+          @click="createDialogShow = true"
+        >
           <template #icon>
             <n-icon :component="AddCircleOutline" />
           </template>
           {{ t("keys.addKey") }}
         </n-button>
-        <n-button type="error" size="small" @click="deleteDialogShow = true">
+        <n-button
+          type="error"
+          size="small"
+          secondary
+          :disabled="!selectedGroup"
+          @click="deleteDialogShow = true"
+        >
           <template #icon>
             <n-icon :component="RemoveCircleOutline" />
           </template>
@@ -639,21 +700,22 @@ function resetPage() {
         </n-button>
       </div>
       <div class="toolbar-right">
-        <n-space :size="12" align="center">
+        <div class="toolbar-controls">
           <n-select
             v-model:value="statusFilter"
             :options="statusOptions"
             size="small"
-            style="width: 120px"
+            class="status-filter"
             :placeholder="t('keys.allStatus')"
+            :disabled="!selectedGroup || loading"
           />
-          <n-input-group>
+          <n-input-group class="search-control">
             <n-input
               v-model:value="searchText"
               :placeholder="t('keys.keyExactMatch')"
               size="small"
-              style="width: 200px"
               clearable
+              :disabled="!selectedGroup || loading"
               @keyup.enter="handleSearchInput"
             >
               <template #prefix>
@@ -664,27 +726,39 @@ function resetPage() {
               type="primary"
               ghost
               size="small"
-              :disabled="loading"
+              :disabled="!selectedGroup || loading"
               @click="handleSearchInput"
             >
               {{ t("common.search") }}
             </n-button>
           </n-input-group>
           <n-dropdown :options="moreOptions" trigger="click" @select="handleMoreAction">
-            <n-button size="small" tertiary>
+            <n-button
+              size="small"
+              tertiary
+              :disabled="!selectedGroup || loading"
+              :aria-label="t('common.more')"
+            >
               <template #icon>
                 <span style="font-size: 16px; font-weight: bold">⋯</span>
               </template>
             </n-button>
           </n-dropdown>
-        </n-space>
+        </div>
       </div>
     </div>
 
     <!-- 密钥卡片网格 -->
     <div class="keys-grid-container">
       <n-spin :show="loading">
-        <div v-if="keys.length === 0 && !loading" class="empty-container">
+        <div v-if="loadError && !loading" class="error-container" role="alert">
+          <n-alert type="error" :title="t('keys.keyListLoadFailed')">
+            <n-button size="small" secondary type="error" @click="loadKeys">
+              {{ t("common.retry") }}
+            </n-button>
+          </n-alert>
+        </div>
+        <div v-else-if="keys.length === 0 && !loading" class="empty-container">
           <n-empty :description="t('keys.noMatchingKeys')" />
         </div>
         <div v-else class="keys-grid">
@@ -715,6 +789,7 @@ function resetPage() {
                     size="tiny"
                     text
                     @click="editKeyNotes(key)"
+                    :aria-label="t('keys.editNotes')"
                     :title="t('keys.editNotes')"
                   >
                     <template #icon>
@@ -725,13 +800,20 @@ function resetPage() {
                     size="tiny"
                     text
                     @click="toggleKeyVisibility(key)"
+                    :aria-label="t('keys.showHide')"
                     :title="t('keys.showHide')"
                   >
                     <template #icon>
                       <n-icon :component="key.is_visible ? EyeOffOutline : EyeOutline" />
                     </template>
                   </n-button>
-                  <n-button size="tiny" text @click="copyKey(key)" :title="t('common.copy')">
+                  <n-button
+                    size="tiny"
+                    text
+                    @click="copyKey(key)"
+                    :aria-label="t('common.copy')"
+                    :title="t('common.copy')"
+                  >
                     <template #icon>
                       <n-icon :component="CopyOutline" />
                     </template>
@@ -794,10 +876,11 @@ function resetPage() {
     </div>
 
     <!-- 分页 -->
-    <div class="pagination-container">
+    <div v-if="!loadError" class="pagination-container">
       <div class="pagination-info">
         <span>{{ t("keys.totalRecords", { total }) }}</span>
         <n-select
+          v-if="total > 0"
           v-model:value="pageSize"
           :options="[
             { label: t('keys.recordsPerPage', { count: 12 }), value: 12 },
@@ -806,11 +889,11 @@ function resetPage() {
             { label: t('keys.recordsPerPage', { count: 120 }), value: 120 },
           ]"
           size="small"
-          style="width: 100px; margin-left: 12px"
+          class="page-size-select"
           @update:value="changePageSize"
         />
       </div>
-      <div class="pagination-controls">
+      <div v-if="total > 0" class="pagination-controls">
         <n-button size="small" :disabled="currentPage <= 1" @click="changePage(currentPage - 1)">
           {{ t("common.previousPage") }}
         </n-button>
@@ -845,7 +928,12 @@ function resetPage() {
   </div>
 
   <!-- 备注编辑对话框 -->
-  <n-modal v-model:show="notesDialogShow" preset="dialog" :title="t('keys.editKeyNotes')">
+  <n-modal
+    v-model:show="notesDialogShow"
+    preset="dialog"
+    class="notes-dialog"
+    :title="t('keys.editKeyNotes')"
+  >
     <n-input
       v-model:value="editingNotes"
       type="textarea"
@@ -863,250 +951,129 @@ function resetPage() {
 
 <style scoped>
 .key-table-container {
-  background: var(--card-bg-solid);
-  border-radius: 8px;
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--border-color);
-  overflow: hidden;
-  height: 100%;
   display: flex;
+  height: 100%;
   flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color-light);
+  border-color: var(--border-color-light);
+  border-radius: var(--border-radius-lg);
+  background: var(--card-bg-solid);
+  box-shadow: var(--shadow-sm);
 }
 
 .toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  background: var(--card-bg-solid);
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-  gap: 16px;
   min-height: 64px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-color-light);
+  background: var(--card-bg-solid);
 }
 
 .toolbar :deep(.n-button) {
   font-weight: 500;
 }
 
-.toolbar-left {
+.toolbar-left,
+.toolbar-controls {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toolbar-left {
   flex-shrink: 0;
 }
 
 .toolbar-right {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  min-width: 0;
   flex: 1;
   justify-content: flex-end;
-  min-width: 0;
 }
 
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.status-filter {
+  width: 120px;
 }
 
-.more-actions {
-  position: relative;
+.search-control {
+  width: 280px;
 }
 
-.more-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  background: var(--card-bg-solid);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: var(--shadow-lg);
-  min-width: 180px;
-  z-index: 1000;
-  overflow: hidden;
-}
-
-.menu-item {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  border: none;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  font-size: 14px;
-  color: #333;
-  transition: background-color 0.2s;
-}
-
-.menu-item:hover {
-  background: #f8f9fa;
-}
-
-.menu-item.danger {
-  color: #dc3545;
-}
-
-.menu-item.danger:hover {
-  background: #f8d7da;
-}
-
-.menu-divider {
-  height: 1px;
-  background: #e9ecef;
-  margin: 4px 0;
-}
-
-.btn {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-.btn-sm {
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: #007bff;
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #0056b3;
-}
-
-.btn-secondary {
-  background: #6c757d;
-  color: white;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: #545b62;
-}
-
-.more-icon {
-  font-size: 16px;
-  font-weight: bold;
-}
-
-.filter-select,
-.search-input,
-.page-size-select {
-  padding: 4px 8px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.search-input {
-  width: 180px;
-}
-
-.filter-select:focus,
-.search-input:focus,
-.page-size-select:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
-}
-
-/* 密钥卡片网格 */
 .keys-grid-container {
   flex: 1;
+  padding: var(--space-4);
   overflow-y: auto;
-  padding: 16px;
 }
 
 .keys-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .key-card {
-  background: var(--card-bg-solid);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 14px;
-  transition: all 0.2s;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 14px;
+  border: 1px solid var(--border-color-light);
+  border-radius: 12px;
+  background: var(--card-bg-solid);
+  box-shadow: none;
+  transition: box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .key-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 
-/* 状态相关样式 */
 .key-card.status-valid {
   border-color: var(--success-border);
-  background: var(--success-bg);
-  border-width: 1.5px;
-}
-
-.key-card.status-invalid {
-  border-color: var(--invalid-border);
-  background: var(--card-bg-solid);
-  opacity: 0.85;
 }
 
 .key-card.status-error {
   border-color: var(--error-border);
-  background: var(--error-bg);
 }
 
-/* 主要信息行 */
-.key-main {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
+.key-card.status-invalid {
+  border-color: var(--invalid-border);
 }
 
-.key-section {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-/* 底部统计和按钮行 */
+.key-main,
+.key-section,
 .key-bottom {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+}
+
+.key-main,
+.key-bottom {
+  justify-content: space-between;
+}
+
+.key-section,
+.key-stats {
+  min-width: 0;
+  flex: 1;
 }
 
 .key-stats {
   display: flex;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-2);
   overflow: hidden;
   color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
+  font-size: 12px;
 }
 
 .stat-item {
-  white-space: nowrap;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .stat-item strong {
@@ -1114,179 +1081,187 @@ function resetPage() {
   font-weight: 600;
 }
 
-.key-actions {
+.key-actions,
+.quick-actions {
   flex-shrink: 0;
-  &:deep(.n-button) {
-    padding: 0 4px;
-  }
+}
+
+.key-actions :deep(.n-button) {
+  padding-inline: 6px;
+}
+
+.key-text,
+:deep(.n-input__input-el) {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
 }
 
 .key-text {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
-  font-weight: 500;
-  flex: 1;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 500;
   white-space: nowrap;
 }
 
-/* 浅色主题 */
-:root:not(.dark) .key-text {
-  color: #495057;
-  background: #f8f9fa;
-}
-
-/* 暗黑主题 */
-:root.dark .key-text {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
 :deep(.n-input__input-el) {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
   font-size: 13px;
 }
 
 .quick-actions {
   display: flex;
-  gap: 4px;
-  flex-shrink: 0;
+  gap: var(--space-1);
 }
 
-.quick-btn {
-  padding: 4px 6px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 3px;
-  font-size: 12px;
-  transition: background-color 0.2s;
+.quick-actions :deep(.n-button) {
+  min-width: 32px;
+  min-height: 32px;
 }
 
-/* 浅色主题 */
-:root:not(.dark) .quick-btn:hover {
-  background: #e9ecef;
+.empty-container,
+.error-container {
+  display: grid;
+  min-height: 14rem;
+  place-items: center;
 }
 
-/* 暗黑主题 */
-:root.dark .quick-btn:hover {
-  background: var(--bg-tertiary);
+.error-container :deep(.n-alert) {
+  width: min(100%, 32rem);
 }
 
-/* 统计信息行 */
-
-.action-btn {
-  padding: 2px 6px;
-  border: 1px solid var(--border-color);
-  background: var(--card-bg-solid);
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 500;
-  transition: all 0.2s;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-
-.action-btn:hover {
-  background: var(--bg-secondary);
-}
-
-.action-btn.primary {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
-
-.action-btn.primary:hover {
-  background: var(--primary-color);
-  color: white;
-}
-
-.action-btn.secondary {
-  border-color: #6c757d;
-  color: #6c757d;
-}
-
-.action-btn.secondary:hover {
-  background: #6c757d;
-  color: white;
-}
-
-.action-btn.danger {
-  border-color: #dc3545;
-  color: #dc3545;
-}
-
-.action-btn.danger:hover {
-  background: #dc3545;
-  color: white;
-}
-
-/* 加载和空状态 */
-.loading-state,
-.empty-state {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 200px;
-  color: #6c757d;
-}
-
-.loading-spinner {
-  font-size: 14px;
-}
-
-.empty-text {
-  font-size: 14px;
-}
-
-/* 分页 */
 .pagination-container {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--card-bg-solid);
-  border-top: 1px solid var(--border-color);
   flex-shrink: 0;
-  border-radius: 0 0 8px 8px;
-}
-
-.pagination-info {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color-light);
+  background: var(--card-bg-solid);
 }
 
+.pagination-info,
 .pagination-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
+.pagination-info,
 .page-info {
-  font-size: 12px;
   color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.page-size-select {
+  width: 112px;
+}
+
+.notes-dialog {
+  width: min(520px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
 }
 
 @media (max-width: 768px) {
   .toolbar {
     flex-direction: column;
     align-items: stretch;
-    gap: 12px;
+    padding: var(--space-3);
   }
 
   .toolbar-left,
-  .toolbar-right {
+  .toolbar-right,
+  .toolbar-controls {
+    width: 100%;
+  }
+
+  .toolbar-left :deep(.n-button) {
+    min-height: 44px;
+    flex: 1;
+  }
+
+  .toolbar-controls {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .status-filter,
+  .search-control {
+    width: 100%;
+  }
+
+  .toolbar-controls > :deep(.n-dropdown) {
+    margin-left: auto;
+  }
+
+  .toolbar-controls :deep(.n-button),
+  .toolbar-controls :deep(.n-base-selection),
+  .toolbar-controls :deep(.n-input) {
+    min-height: 44px;
+  }
+
+  .keys-grid-container {
+    padding: var(--space-3);
+  }
+
+  .keys-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .key-section,
+  .key-bottom {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .key-text,
+  .quick-actions,
+  .key-stats,
+  .key-actions {
+    width: 100%;
+  }
+
+  .quick-actions {
+    justify-content: flex-end;
+  }
+
+  .quick-actions :deep(.n-button),
+  .key-actions :deep(.n-button) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .key-actions {
+    display: flex;
+  }
+
+  .key-actions :deep(.n-button) {
+    flex: 1;
+  }
+
+  .pagination-container {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .pagination-info,
+  .pagination-controls {
     width: 100%;
     justify-content: space-between;
   }
 
-  .toolbar-right .n-space {
-    width: 100%;
-    justify-content: space-between;
+  .pagination-controls :deep(.n-button) {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-card {
+    transition: none;
   }
 }
 </style>

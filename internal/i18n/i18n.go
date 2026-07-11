@@ -36,10 +36,12 @@ func loadMessageFile(lang string) error {
 	// 根据语言设置消息
 	messages := getMessages(lang)
 	for id, msg := range messages {
-		bundle.AddMessages(language.MustParse(lang), &i18n.Message{
+		if err := bundle.AddMessages(language.MustParse(lang), &i18n.Message{
 			ID:    id,
 			Other: msg,
-		})
+		}); err != nil {
+			return fmt.Errorf("failed to add message %q for %s: %w", id, lang, err)
+		}
 	}
 
 	return nil

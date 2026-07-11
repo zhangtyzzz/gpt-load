@@ -1,20 +1,36 @@
 name: Build Docker Image
 
+env:
+  # Update during each stable release review so upgrade smoke follows the supported baseline.
+  PREVIOUS_STABLE_TAG: v1.5.1
+
 on:
   push:
     tags:
-      - "*"
+      - "v*"
 jobs:
   build_docker_image:
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
     permissions:
       packages: write
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]]; then
+            echo "::error::Unsupported release tag: $RELEASE_TAG"
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -41,8 +57,6 @@ jobs:
             latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=beta,enable=${{ contains(github.ref, '-beta') }}
-            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       - name: Build and push Docker image
         id: build
@@ -57,3 +71,241 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ github.ref_name }}
+
+  release_smoke:
+    name: Release image smoke tests
+    needs: build_docker_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: read
+      contents: read
+    env:
+      IMAGE_REF: ghcr.io/${{ github.repository }}@${{ needs.build_docker_image.outputs.image_digest }}
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+      AUTH_KEY: release-smoke-admin-key-fixture-not-production
+    steps:
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull release images
+        shell: bash
+        run: |
+          if [[ ! "$IMAGE_REF" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Build job did not expose an immutable image digest"
+            exit 1
+          fi
+          previous_image="${IMAGE_REPOSITORY}:${PREVIOUS_STABLE_TAG}"
+
+          pull_image() {
+            local image="$1"
+            for attempt in 1 2 3 4; do
+              if docker pull "$image"; then
+                return 0
+              fi
+              if [[ "$attempt" -eq 4 ]]; then
+                echo "::error::Failed to pull $image after $attempt attempts"
+                return 1
+              fi
+              sleep 3
+            done
+          }
+
+          pull_image "$IMAGE_REF"
+          pull_image "$previous_image"
+
+      - name: Verify fresh install and previous stable upgrade
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          run_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fresh_container="gpt-load-smoke-fresh-${run_suffix}"
+          old_container="gpt-load-smoke-old-${run_suffix}"
+          upgraded_container="gpt-load-smoke-upgraded-${run_suffix}"
+          fresh_volume="gpt-load-smoke-fresh-${run_suffix}"
+          upgrade_volume="gpt-load-smoke-upgrade-${run_suffix}"
+          fresh_port=18081
+          upgrade_port=18082
+          group_name="release-smoke-upgrade-fixture"
+          previous_image="${IMAGE_REPOSITORY}:${PREVIOUS_STABLE_TAG}"
+
+          cleanup() {
+            status=$?
+            trap - EXIT
+
+            if [[ "$status" -ne 0 ]]; then
+              for container in "$fresh_container" "$old_container" "$upgraded_container"; do
+                if docker inspect "$container" >/dev/null 2>&1; then
+                  echo "::group::Logs for $container"
+                  docker logs "$container" || true
+                  echo "::endgroup::"
+                fi
+              done
+            fi
+
+            docker rm -f "$fresh_container" "$old_container" "$upgraded_container" >/dev/null 2>&1 || true
+            docker volume rm -f "$fresh_volume" "$upgrade_volume" >/dev/null 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          wait_for_health() {
+            local port="$1"
+            for _ in {1..60}; do
+              if curl --fail --silent "http://127.0.0.1:${port}/health" >/dev/null; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::Timed out waiting for health on port ${port}"
+            return 1
+          }
+
+          assert_login() {
+            local port="$1"
+            local response
+            response="$(curl --fail --silent --show-error \
+              -H 'Content-Type: application/json' \
+              --data "{\"auth_key\":\"${AUTH_KEY}\"}" \
+              "http://127.0.0.1:${port}/api/auth/login")"
+            if [[ "$response" != *'"success":true'* ]]; then
+              echo "::error::Login smoke test failed on port ${port}"
+              return 1
+            fi
+          }
+
+          docker volume create "$fresh_volume" >/dev/null
+          docker run --detach \
+            --name "$fresh_container" \
+            --publish "127.0.0.1:${fresh_port}:3001" \
+            --env "AUTH_KEY=${AUTH_KEY}" \
+            --env 'DATABASE_DSN=/app/data/gpt-load.db' \
+            --env 'LOG_ENABLE_FILE=false' \
+            --env 'LOG_LEVEL=warn' \
+            --volume "${fresh_volume}:/app/data" \
+            "$IMAGE_REF" >/dev/null
+
+          wait_for_health "$fresh_port"
+          assert_login "$fresh_port"
+          docker rm -f "$fresh_container" >/dev/null
+          docker volume rm "$fresh_volume" >/dev/null
+
+          docker volume create "$upgrade_volume" >/dev/null
+          docker run --detach \
+            --name "$old_container" \
+            --publish "127.0.0.1:${upgrade_port}:3001" \
+            --env "AUTH_KEY=${AUTH_KEY}" \
+            --env 'DATABASE_DSN=/app/data/gpt-load.db' \
+            --env 'LOG_ENABLE_FILE=false' \
+            --env 'LOG_LEVEL=warn' \
+            --volume "${upgrade_volume}:/app/data" \
+            "$previous_image" >/dev/null
+
+          wait_for_health "$upgrade_port"
+          assert_login "$upgrade_port"
+
+          group_payload='{"name":"release-smoke-upgrade-fixture","display_name":"Release smoke fixture","description":"Non-production Docker upgrade fixture","group_type":"standard","upstreams":[{"url":"https://example.invalid","weight":1}],"channel_type":"openai","sort":1,"test_model":"release-smoke-model","validation_endpoint":"/v1/models","param_overrides":{},"model_redirect_rules":{},"model_redirect_strict":false,"config":{},"header_rules":[],"affinity_rules":[],"proxy_keys":"release-smoke-proxy-key-fixture-not-production"}'
+          create_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${AUTH_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data "$group_payload" \
+            "http://127.0.0.1:${upgrade_port}/api/groups")"
+          if [[ "$create_response" != *"\"name\":\"${group_name}\""* ]]; then
+            echo "::error::Previous stable image did not create the upgrade fixture group"
+            exit 1
+          fi
+
+          docker stop --time 20 "$old_container" >/dev/null
+
+          docker run --detach \
+            --name "$upgraded_container" \
+            --publish "127.0.0.1:${upgrade_port}:3001" \
+            --env "AUTH_KEY=${AUTH_KEY}" \
+            --env 'DATABASE_DSN=/app/data/gpt-load.db' \
+            --env 'LOG_ENABLE_FILE=false' \
+            --env 'LOG_LEVEL=warn' \
+            --volume "${upgrade_volume}:/app/data" \
+            "$IMAGE_REF" >/dev/null
+
+          wait_for_health "$upgrade_port"
+          assert_login "$upgrade_port"
+
+          groups_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${AUTH_KEY}" \
+            "http://127.0.0.1:${upgrade_port}/api/groups")"
+          if [[ "$groups_response" != *"\"name\":\"${group_name}\""* ]]; then
+            echo "::error::Upgrade smoke test lost the v1.5.1 fixture group"
+            exit 1
+          fi
+
+      - name: Ensure smoke resources are removed
+        if: always()
+        shell: bash
+        run: |
+          run_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker rm -f \
+            "gpt-load-smoke-fresh-${run_suffix}" \
+            "gpt-load-smoke-old-${run_suffix}" \
+            "gpt-load-smoke-upgraded-${run_suffix}" >/dev/null 2>&1 || true
+          docker volume rm -f \
+            "gpt-load-smoke-fresh-${run_suffix}" \
+            "gpt-load-smoke-upgrade-${run_suffix}" >/dev/null 2>&1 || true
+
+  promote_channel:
+    name: Promote verified release channel
+    needs:
+      - build_docker_image
+      - release_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+      contents: read
+    env:
+      IMAGE_REF: ghcr.io/${{ github.repository }}@${{ needs.build_docker_image.outputs.image_digest }}
+      TARGET_IMAGE: ghcr.io/${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote tested digest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ ! "$IMAGE_REF" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Build job did not expose an immutable image digest"
+            exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" == *'-beta.'* ]]; then
+            channel=beta
+          else
+            channel=latest
+          fi
+
+          docker buildx imagetools create \
+            --tag "${TARGET_IMAGE}:${channel}" \
+            "$IMAGE_REF"
+          expected_digest="${IMAGE_REF##*@}"
+          promoted_manifest="$(docker buildx imagetools inspect \
+            "${TARGET_IMAGE}:${channel}" \
+            --format '{{json .Manifest}}')"
+          if [[ ! "$promoted_manifest" =~ \"digest\"[[:space:]]*:[[:space:]]*\"${expected_digest}\" ]]; then
+            echo "::error::Promoted ${channel} digest does not match the tested image"
+            exit 1
+          fi
+          docker buildx imagetools inspect "${TARGET_IMAGE}:${channel}"

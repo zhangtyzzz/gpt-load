@@ -266,7 +266,14 @@ function removeRule(index: number) {
           :placeholder="t('errorPolicy.cooldownSeconds')"
         />
         <div v-else class="policy-cooldown-placeholder" />
-        <n-button type="error" quaternary circle size="small" @click="removeRule(index)">
+        <n-button
+          type="error"
+          quaternary
+          circle
+          size="small"
+          :aria-label="t('common.delete')"
+          @click="removeRule(index)"
+        >
           <template #icon>
             <n-icon :component="Remove" />
           </template>

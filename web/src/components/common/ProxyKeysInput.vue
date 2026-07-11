@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { copy } from "@/utils/clipboard";
-import { Copy, Key } from "@vicons/ionicons5";
+import { generateSecureRandomString } from "@/utils/secure-random";
+import { Copy, EyeOffOutline, EyeOutline, Key } from "@vicons/ionicons5";
 import { NButton, NIcon, NInput, NInputNumber, NModal, NSpace, useMessage } from "naive-ui";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -29,22 +30,13 @@ const message = useMessage();
 const showKeyGeneratorModal = ref(false);
 const keyCount = ref(1);
 const isGenerating = ref(false);
-
-// 生成随机字符串
-function generateRandomString(length: number): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+const showProxyKeys = ref(false);
 
 // 生成密钥
 function generateKeys(): string[] {
   const keys: string[] = [];
   for (let i = 0; i < keyCount.value; i++) {
-    keys.push(`sk-${generateRandomString(48)}`);
+    keys.push(`sk-${generateSecureRandomString(48)}`);
   }
   return keys;
 }
@@ -84,6 +76,8 @@ function confirmGenerateKeys() {
     showKeyGeneratorModal.value = false;
 
     message.success(t("keys.keysGeneratedSuccess", { count: keyCount.value }));
+  } catch (_error) {
+    message.error(t("keys.keyGenerationFailed"));
   } finally {
     isGenerating.value = false;
   }
@@ -122,6 +116,7 @@ function handleInput(value: string) {
   <div class="proxy-keys-input">
     <n-input
       :value="modelValue"
+      :type="showProxyKeys ? 'text' : 'password'"
       :placeholder="placeholder || t('keys.multiKeysPlaceholder')"
       clearable
       :size="size"
@@ -129,6 +124,17 @@ function handleInput(value: string) {
     >
       <template #suffix>
         <n-space :size="4" :wrap-item="false">
+          <n-button
+            text
+            :size="size"
+            :title="showProxyKeys ? t('keys.hideKeys') : t('keys.showKeys')"
+            :aria-label="showProxyKeys ? t('keys.hideKeys') : t('keys.showKeys')"
+            @click="showProxyKeys = !showProxyKeys"
+          >
+            <template #icon>
+              <n-icon :component="showProxyKeys ? EyeOffOutline : EyeOutline" />
+            </template>
+          </n-button>
           <n-button text type="primary" :size="size" @click="openKeyGenerator">
             <template #icon>
               <n-icon :component="Key" />
@@ -155,9 +161,9 @@ function handleInput(value: string) {
       :positive-button-props="{ loading: isGenerating }"
       @positive-click="confirmGenerateKeys"
     >
-      <n-space vertical :size="16">
+      <n-space vertical :size="16" class="key-generator-content">
         <div>
-          <p style="margin: 0 0 8px 0; color: #666; font-size: 14px">
+          <p class="generator-label">
             {{ t("keys.enterKeysCount") }}
           </p>
           <n-input-number
@@ -169,7 +175,7 @@ function handleInput(value: string) {
             :disabled="isGenerating"
           />
         </div>
-        <div style="color: #999; font-size: 12px; line-height: 1.4">
+        <div class="generator-help">
           <p>{{ t("keys.generatedKeysWillAppend") }}</p>
         </div>
       </n-space>
@@ -180,5 +186,21 @@ function handleInput(value: string) {
 <style scoped>
 .proxy-keys-input {
   width: 100%;
+}
+
+.key-generator-content {
+  width: 100%;
+}
+
+.generator-label {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.generator-help {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>
