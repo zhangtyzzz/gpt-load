@@ -131,6 +131,7 @@ func registerProtectedAPIRoutes(api *gin.RouterGroup, serverHandler *handler.Ser
 	keys := api.Group("/keys")
 	{
 		keys.GET("", serverHandler.ListKeysInGroup)
+		keys.POST("/search", serverHandler.SearchKeysInGroup)
 		keys.GET("/export", serverHandler.ExportKeys)
 		keys.POST("/add-multiple", serverHandler.AddMultipleKeys)
 		keys.POST("/add-async", serverHandler.AddMultipleKeysAsync)
@@ -160,7 +161,9 @@ func registerProtectedAPIRoutes(api *gin.RouterGroup, serverHandler *handler.Ser
 	logs := api.Group("/logs")
 	{
 		logs.GET("", serverHandler.GetLogs)
+		logs.POST("/search", serverHandler.SearchLogs)
 		logs.GET("/export", serverHandler.ExportLogs)
+		logs.POST("/export", serverHandler.ExportLogsSearch)
 	}
 
 	// 设置

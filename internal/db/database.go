@@ -2,12 +2,14 @@ package db
 
 import (
 	"fmt"
-	"gpt-load/internal/types"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gpt-load/internal/types"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -18,6 +20,13 @@ import (
 
 var DB *gorm.DB
 
+func ensureSQLiteDatabaseDirectory(dsn string) error {
+	if err := os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
+		return fmt.Errorf("failed to create database directory: %w", err)
+	}
+	return nil
+}
+
 func NewDB(configManager types.ConfigManager) (*gorm.DB, error) {
 	dbConfig := configManager.GetDatabaseConfig()
 	dsn := dbConfig.DSN
@@ -25,18 +34,7 @@ func NewDB(configManager types.ConfigManager) (*gorm.DB, error) {
 		return nil, fmt.Errorf("DATABASE_DSN is not configured")
 	}
 
-	var newLogger logger.Interface
-	if configManager.GetLogConfig().Level == "debug" {
-		newLogger = logger.New(
-			log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
-			logger.Config{
-				SlowThreshold:             time.Second, // Slow SQL threshold
-				LogLevel:                  logger.Info, // Log level
-				IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
-				Colorful:                  true,        // Disable color
-			},
-		)
-	}
+	newLogger := newDatabaseLogger(os.Stdout, configManager.GetLogConfig().Level == "debug")
 
 	var dialector gorm.Dialector
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
@@ -54,8 +52,8 @@ func NewDB(configManager types.ConfigManager) (*gorm.DB, error) {
 		}
 		dialector = mysql.Open(dsn)
 	} else {
-		if err := os.MkdirAll(filepath.Dir(dsn), 0755); err != nil {
-			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		if err := ensureSQLiteDatabaseDirectory(dsn); err != nil {
+			return nil, err
 		}
 		dialector = sqlite.Open(dsn + "?_busy_timeout=5000")
 	}
@@ -79,4 +77,25 @@ func NewDB(configManager types.ConfigManager) (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return DB, nil
+}
+
+func newDatabaseLogger(writer io.Writer, debug bool) logger.Interface {
+	logLevel := logger.Warn
+	slowThreshold := 200 * time.Millisecond
+	ignoreRecordNotFound := false
+	if debug {
+		logLevel = logger.Info
+		slowThreshold = time.Second
+		ignoreRecordNotFound = true
+	}
+	return logger.New(
+		log.New(writer, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             slowThreshold,
+			LogLevel:                  logLevel,
+			IgnoreRecordNotFoundError: ignoreRecordNotFound,
+			ParameterizedQueries:      true, // Never render credentials or other values in SQL logs.
+			Colorful:                  true,
+		},
+	)
 }

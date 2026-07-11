@@ -244,6 +244,23 @@ func (s *MemoryStore) LPush(key string, values ...any) error {
 	return nil
 }
 
+// ReplaceList atomically replaces a list with the supplied values.
+func (s *MemoryStore) ReplaceList(key string, values ...any) error {
+	strValues := make([]string, len(values))
+	for i, value := range values {
+		strValues[i] = fmt.Sprint(value)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(strValues) == 0 {
+		delete(s.data, key)
+		return nil
+	}
+	s.data[key] = strValues
+	return nil
+}
+
 func (s *MemoryStore) LRem(key string, count int64, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,6 +335,28 @@ func (s *MemoryStore) LLen(key string) (int64, error) {
 	}
 
 	return int64(len(list)), nil
+}
+
+// LContains reports whether a list contains the supplied value.
+func (s *MemoryStore) LContains(key string, value any) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rawList, exists := s.data[key]
+	if !exists {
+		return false, nil
+	}
+	list, ok := rawList.([]string)
+	if !ok {
+		return false, fmt.Errorf("type mismatch: key '%s' holds a different data type", key)
+	}
+	wanted := fmt.Sprint(value)
+	for _, item := range list {
+		if item == wanted {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // --- SET operations ---

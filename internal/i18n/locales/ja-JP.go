@@ -1,6 +1,7 @@
 package locales
 
 // Messages Japanese translations
+// #nosec G101 -- this static localization catalog contains UI labels about credentials, not credential values.
 var MessagesJaJP = map[string]string{
 	// Common messages
 	"success":        "操作成功",
@@ -60,6 +61,7 @@ var MessagesJaJP = map[string]string{
 	"validation.group_id_required":                           "group_idクエリパラメータが必要です",
 	"validation.invalid_group_id_format":                     "無効なgroup_id形式",
 	"validation.keys_text_empty":                             "キーテキストは空にできません",
+	"validation.key_search_requires_post":                    "完全なキーの検索は POST リクエストで送信する必要があります",
 	"validation.file_required":                               "ファイルが必要です",
 	"validation.only_txt_supported":                          ".txtファイルのみサポートされています",
 	"validation.failed_to_open_file":                         "ファイルを開けませんでした",

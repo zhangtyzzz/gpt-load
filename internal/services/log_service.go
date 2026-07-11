@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"gpt-load/internal/encryption"
 	"gpt-load/internal/models"
+	"gpt-load/internal/utils"
 	"io"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
 // ExportableLogKey defines the structure for the data to be exported to CSV.
 type ExportableLogKey struct {
-	KeyValue   string `gorm:"column:key_value"`
+	KeyHash    string `gorm:"column:key_hash"`
 	GroupName  string `gorm:"column:group_name"`
 	StatusCode int    `gorm:"column:status_code"`
 }
@@ -27,6 +26,26 @@ type LogService struct {
 	EncryptionSvc encryption.Service
 }
 
+// LogFilter contains request-log search criteria independently of the HTTP
+// transport. Handlers decide whether a credential-shaped key value is allowed:
+// GET compatibility endpoints accept fingerprints only, while POST JSON search
+// endpoints may hash a complete upstream key without placing it in a URL.
+type LogFilter struct {
+	Page            int        `json:"page"`
+	PageSize        int        `json:"page_size"`
+	ParentGroupName string     `json:"parent_group_name"`
+	GroupName       string     `json:"group_name"`
+	KeyValue        string     `json:"key_value"`
+	Model           string     `json:"model"`
+	IsSuccess       *bool      `json:"is_success"`
+	RequestType     string     `json:"request_type"`
+	StatusCode      *int       `json:"status_code"`
+	SourceIP        string     `json:"source_ip"`
+	ErrorContains   string     `json:"error_contains"`
+	StartTime       *time.Time `json:"start_time"`
+	EndTime         *time.Time `json:"end_time"`
+}
+
 // NewLogService creates a new LogService.
 func NewLogService(db *gorm.DB, encryptionSvc encryption.Service) *LogService {
 	return &LogService{
@@ -35,85 +54,80 @@ func NewLogService(db *gorm.DB, encryptionSvc encryption.Service) *LogService {
 	}
 }
 
-// logFiltersScope returns a GORM scope function that applies filters from the Gin context.
-func (s *LogService) logFiltersScope(c *gin.Context) func(db *gorm.DB) *gorm.DB {
+// logFiltersScope returns a GORM scope function that applies a validated filter.
+func (s *LogService) logFiltersScope(filter LogFilter) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		if parentGroupName := c.Query("parent_group_name"); parentGroupName != "" {
-			db = db.Where("parent_group_name LIKE ?", "%"+parentGroupName+"%")
+		if filter.ParentGroupName != "" {
+			db = db.Where("parent_group_name LIKE ?", "%"+filter.ParentGroupName+"%")
 		}
-		if groupName := c.Query("group_name"); groupName != "" {
-			db = db.Where("group_name LIKE ?", "%"+groupName+"%")
+		if filter.GroupName != "" {
+			db = db.Where("group_name LIKE ?", "%"+filter.GroupName+"%")
 		}
-		if keyValue := c.Query("key_value"); keyValue != "" {
-			keyHash := s.EncryptionSvc.Hash(keyValue)
-			db = db.Where("key_hash = ?", keyHash)
-		}
-		if model := c.Query("model"); model != "" {
-			db = db.Where("model LIKE ?", "%"+model+"%")
-		}
-		if isSuccessStr := c.Query("is_success"); isSuccessStr != "" {
-			if isSuccess, err := strconv.ParseBool(isSuccessStr); err == nil {
-				db = db.Where("is_success = ?", isSuccess)
+		if filter.KeyValue != "" {
+			if hashPrefix, ok := utils.ParseKeyFingerprint(filter.KeyValue); ok {
+				db = db.Where("key_hash LIKE ?", hashPrefix+"%")
+			} else {
+				keyHash := s.EncryptionSvc.Hash(filter.KeyValue)
+				db = db.Where("key_hash = ?", keyHash)
 			}
 		}
-		if requestType := c.Query("request_type"); requestType != "" {
-			db = db.Where("request_type = ?", requestType)
+		if filter.Model != "" {
+			db = db.Where("model LIKE ?", "%"+filter.Model+"%")
 		}
-		if statusCodeStr := c.Query("status_code"); statusCodeStr != "" {
-			if statusCode, err := strconv.Atoi(statusCodeStr); err == nil {
-				db = db.Where("status_code = ?", statusCode)
-			}
+		if filter.IsSuccess != nil {
+			db = db.Where("is_success = ?", *filter.IsSuccess)
 		}
-		if sourceIP := c.Query("source_ip"); sourceIP != "" {
-			db = db.Where("source_ip = ?", sourceIP)
+		if filter.RequestType != "" {
+			db = db.Where("request_type = ?", filter.RequestType)
 		}
-		if errorContains := c.Query("error_contains"); errorContains != "" {
-			db = db.Where("error_message LIKE ?", "%"+errorContains+"%")
+		if filter.StatusCode != nil {
+			db = db.Where("status_code = ?", *filter.StatusCode)
 		}
-		if startTimeStr := c.Query("start_time"); startTimeStr != "" {
-			if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
-				db = db.Where("timestamp >= ?", startTime)
-			}
+		if filter.SourceIP != "" {
+			db = db.Where("source_ip = ?", filter.SourceIP)
 		}
-		if endTimeStr := c.Query("end_time"); endTimeStr != "" {
-			if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
-				db = db.Where("timestamp <= ?", endTime)
-			}
+		if filter.ErrorContains != "" {
+			db = db.Where("error_message LIKE ?", "%"+filter.ErrorContains+"%")
+		}
+		if filter.StartTime != nil {
+			db = db.Where("timestamp >= ?", *filter.StartTime)
+		}
+		if filter.EndTime != nil {
+			db = db.Where("timestamp <= ?", *filter.EndTime)
 		}
 		return db
 	}
 }
 
 // GetLogsQuery returns a GORM query for fetching logs with filters.
-func (s *LogService) GetLogsQuery(c *gin.Context) *gorm.DB {
-	return s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(c))
+func (s *LogService) GetLogsQuery(filter LogFilter) *gorm.DB {
+	return s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(filter))
 }
 
 // StreamLogKeysToCSV fetches unique keys from logs based on filters and streams them as a CSV.
-func (s *LogService) StreamLogKeysToCSV(c *gin.Context, writer io.Writer) error {
+func (s *LogService) StreamLogKeysToCSV(filter LogFilter, writer io.Writer) error {
 	// Create a CSV writer
 	csvWriter := csv.NewWriter(writer)
 	defer csvWriter.Flush()
 
 	// Write CSV header
-	header := []string{"key_value", "group_name", "status_code"}
+	header := []string{"key_identifier", "group_name", "status_code"}
 	if err := csvWriter.Write(header); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
 	var results []ExportableLogKey
 
-	baseQuery := s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(c)).Where("key_hash IS NOT NULL AND key_hash != ''")
+	baseQuery := s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(filter)).Where("key_hash IS NOT NULL AND key_hash != ''")
 
 	// 使用窗口函数获取每个key_hash的最新记录（避免同一密钥因多次加密产生重复）
 	err := s.DB.Raw(`
 		SELECT
-			key_value,
+			key_hash,
 			group_name,
 			status_code
 		FROM (
 			SELECT
-				key_value,
 				key_hash,
 				group_name,
 				status_code,
@@ -128,21 +142,12 @@ func (s *LogService) StreamLogKeysToCSV(c *gin.Context, writer io.Writer) error 
 		return fmt.Errorf("failed to fetch log keys: %w", err)
 	}
 
-	// 解密并写入CSV数据
+	// Export only the non-reversible key identifier. This also makes exports
+	// safe for historical rows whose key_value may contain legacy ciphertext or
+	// plaintext.
 	for _, record := range results {
-		// 解密密钥用于CSV导出
-		decryptedKey := record.KeyValue
-		if record.KeyValue != "" {
-			if decrypted, err := s.EncryptionSvc.Decrypt(record.KeyValue); err != nil {
-				logrus.WithError(err).WithField("key_value", record.KeyValue).Error("Failed to decrypt key for CSV export")
-				decryptedKey = "failed-to-decrypt"
-			} else {
-				decryptedKey = decrypted
-			}
-		}
-
 		csvRecord := []string{
-			decryptedKey,
+			utils.KeyFingerprint(record.KeyHash),
 			record.GroupName,
 			strconv.Itoa(record.StatusCode),
 		}

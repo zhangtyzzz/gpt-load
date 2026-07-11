@@ -1,6 +1,7 @@
 package locales
 
 // Messages English (US) translations
+// #nosec G101 -- this static localization catalog contains UI labels about credentials, not credential values.
 var MessagesEnUS = map[string]string{
 	// Common messages
 	"success":        "Operation successful",
@@ -60,6 +61,7 @@ var MessagesEnUS = map[string]string{
 	"validation.group_id_required":                           "group_id query parameter is required",
 	"validation.invalid_group_id_format":                     "Invalid group_id format",
 	"validation.keys_text_empty":                             "Keys text cannot be empty",
+	"validation.key_search_requires_post":                    "Exact key searches must be submitted with POST",
 	"validation.file_required":                               "File is required",
 	"validation.only_txt_supported":                          "Only .txt files are supported",
 	"validation.failed_to_open_file":                         "Failed to open file",

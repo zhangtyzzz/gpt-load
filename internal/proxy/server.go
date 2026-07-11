@@ -104,7 +104,9 @@ func (ps *ProxyServer) HandleProxy(c *gin.Context) {
 		response.Error(c, app_errors.NewAPIError(app_errors.ErrBadRequest, "Failed to read request body"))
 		return
 	}
-	c.Request.Body.Close()
+	if closeErr := c.Request.Body.Close(); closeErr != nil {
+		logrus.WithField("error", utils.SanitizeText(closeErr.Error())).Warn("Failed to close request body")
+	}
 
 	finalBodyBytes, err := ps.applyParamOverrides(bodyBytes, group)
 	if err != nil {
@@ -237,8 +239,9 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	}
 
 	if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
+		keyIdentifier := utils.KeyFingerprint(ps.encryptionSvc.Hash(apiKey.KeyValue))
 		if err != nil && app_errors.IsIgnorableError(err) {
-			logrus.Debugf("Client-side ignorable error for key %s, aborting retries: %v", utils.MaskAPIKey(apiKey.KeyValue), err)
+			logrus.Debugf("Client-side ignorable error for key %s, aborting retries: %s", keyIdentifier, utils.SanitizeText(err.Error()))
 			ps.logRequest(c, originalGroup, group, apiKey, startTime, 499, err, isStream, upstreamURL, channelHandler, bodyBytes, models.RequestTypeFinal)
 			return
 		}
@@ -249,9 +252,9 @@ func (ps *ProxyServer) executeRequestWithRetry(
 
 		if err != nil {
 			statusCode = 500
-			errorMessage = err.Error()
+			errorMessage = utils.SanitizeKnownSecrets(err.Error(), apiKey.KeyValue)
 			parsedError = errorMessage
-			logrus.Debugf("Request failed (attempt %d/%d) for key %s: %v", retryCount+1, cfg.MaxRetries, utils.MaskAPIKey(apiKey.KeyValue), err)
+			logrus.Debugf("Request failed (attempt %d/%d) for key %s: %s", retryCount+1, cfg.MaxRetries, keyIdentifier, errorMessage)
 		} else {
 			// Retryable upstream response (HTTP status code matched failover policy)
 			statusCode = resp.StatusCode
@@ -262,9 +265,8 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			}
 
 			errorBody = handleGzipCompression(resp, errorBody)
-			errorMessage = string(errorBody)
-			parsedError = app_errors.ParseUpstreamError(errorBody)
-			logrus.Debugf("Request failed with status %d (attempt %d/%d) for key %s. Parsed Error: %s", statusCode, retryCount+1, cfg.MaxRetries, utils.MaskAPIKey(apiKey.KeyValue), parsedError)
+			errorMessage, parsedError = sanitizeUpstreamError(errorBody, apiKey.KeyValue)
+			logrus.Debugf("Request failed with status %d (attempt %d/%d) for key %s. Parsed Error: %s", statusCode, retryCount+1, cfg.MaxRetries, keyIdentifier, parsedError)
 		}
 
 		policy := group.ErrorPolicy
@@ -308,7 +310,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	}
 
 	// ps.keyProvider.UpdateStatus(apiKey, group, true) // 请求成功不再重置成功次数，减少IO消耗
-	logrus.Debugf("Request for group %s succeeded on attempt %d with key %s", group.Name, retryCount+1, utils.MaskAPIKey(apiKey.KeyValue))
+	logrus.Debugf("Request for group %s succeeded on attempt %d with key %s", group.Name, retryCount+1, utils.KeyFingerprint(ps.encryptionSvc.Hash(apiKey.KeyValue)))
 
 	// Update affinity mapping on success
 	// On retry (fallback), this updates the mapping to the new working key
@@ -337,6 +339,15 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	ps.logRequest(c, originalGroup, group, apiKey, startTime, resp.StatusCode, nil, isStream, upstreamURL, channelHandler, bodyBytes, models.RequestTypeFinal)
 }
 
+func sanitizeUpstreamError(errorBody []byte, apiKey string) (string, string) {
+	safeBody := utils.SanitizeKnownSecrets(string(errorBody), apiKey)
+	parsedError := utils.SanitizeKnownSecrets(
+		app_errors.ParseUpstreamError([]byte(safeBody)),
+		apiKey,
+	)
+	return safeBody, parsedError
+}
+
 // logRequest is a helper function to create and record a request log.
 func (ps *ProxyServer) logRequest(
 	c *gin.Context,
@@ -359,7 +370,7 @@ func (ps *ProxyServer) logRequest(
 	var requestBodyToLog, userAgent string
 
 	if group.EffectiveConfig.EnableRequestBodyLogging {
-		requestBodyToLog = utils.TruncateString(string(bodyBytes), 65000)
+		requestBodyToLog = utils.TruncateString(utils.SanitizeText(string(bodyBytes)), 65000)
 		userAgent = c.Request.UserAgent()
 	}
 
@@ -371,7 +382,7 @@ func (ps *ProxyServer) logRequest(
 		IsSuccess:    finalError == nil && statusCode < 400,
 		SourceIP:     c.ClientIP(),
 		StatusCode:   statusCode,
-		RequestPath:  utils.TruncateString(c.Request.URL.String(), 500),
+		RequestPath:  utils.TruncateString(utils.SanitizeURLForLogging(c.Request.URL), 500),
 		Duration:     duration,
 		UserAgent:    userAgent,
 		RequestType:  requestType,
@@ -391,20 +402,14 @@ func (ps *ProxyServer) logRequest(
 	}
 
 	if apiKey != nil {
-		// 加密密钥值用于日志存储
-		encryptedKeyValue, err := ps.encryptionSvc.Encrypt(apiKey.KeyValue)
-		if err != nil {
-			logrus.WithError(err).Error("Failed to encrypt key value for logging")
-			logEntry.KeyValue = "failed-to-encryption"
-		} else {
-			logEntry.KeyValue = encryptedKeyValue
-		}
-		// 添加 KeyHash 用于反查
+		// Request logs retain only a one-way identifier. The upstream credential
+		// must never enter the log cache, database, API response, or CSV export.
 		logEntry.KeyHash = ps.encryptionSvc.Hash(apiKey.KeyValue)
+		logEntry.KeyValue = utils.KeyFingerprint(logEntry.KeyHash)
 	}
 
 	if finalError != nil {
-		logEntry.ErrorMessage = finalError.Error()
+		logEntry.ErrorMessage = utils.SanitizeText(finalError.Error())
 	}
 
 	if err := ps.requestLogService.Record(logEntry); err != nil {

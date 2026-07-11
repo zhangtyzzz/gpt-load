@@ -7,6 +7,7 @@ import (
 	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
+	"gpt-load/internal/utils"
 	"io"
 	"net/http"
 	"strconv"
@@ -41,10 +42,11 @@ func logUpstreamError(context string, err error) {
 	if err == nil {
 		return
 	}
+	safeError := utils.SanitizeText(err.Error())
 	if app_errors.IsIgnorableError(err) {
-		logrus.Debugf("Ignorable upstream error in %s: %v", context, err)
+		logrus.Debugf("Ignorable upstream error in %s: %s", context, safeError)
 	} else {
-		logrus.Errorf("Upstream error in %s: %v", context, err)
+		logrus.Errorf("Upstream error in %s: %s", context, safeError)
 	}
 }
 

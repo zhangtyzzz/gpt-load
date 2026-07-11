@@ -11,6 +11,7 @@ import (
 	"gpt-load/internal/response"
 	"gpt-load/internal/services"
 	"gpt-load/internal/types"
+	"gpt-load/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -22,7 +23,7 @@ func Logger(config types.LogConfig) gin.HandlerFunc {
 
 		start := time.Now()
 		path := c.Request.URL.Path
-		raw := c.Request.URL.RawQuery
+		raw := utils.SanitizeRawQuery(c.Request.URL.RawQuery)
 
 		// Process request
 		c.Next()
@@ -43,9 +44,9 @@ func Logger(config types.LogConfig) gin.HandlerFunc {
 		// Get key information (if exists)
 		keyInfo := ""
 		if keyIndex, exists := c.Get("keyIndex"); exists {
-			if keyPreview, exists := c.Get("keyPreview"); exists {
-				keyInfo = fmt.Sprintf(" - Key[%v] %v", keyIndex, keyPreview)
-			}
+			// Log the non-sensitive internal index only. A preview still reveals
+			// credential material and can be correlated via request-log fingerprint.
+			keyInfo = fmt.Sprintf(" - Key[%v]", keyIndex)
 		}
 
 		// Get retry information (if exists)
@@ -187,7 +188,7 @@ func ProxyRouteDispatcher(serverHandler interface{ GetIntegrationInfo(*gin.Conte
 // Recovery creates a recovery middleware with custom error handling
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		logrus.Errorf("Panic recovered: %v", recovered)
+		logrus.Errorf("Panic recovered: %s", utils.SanitizeText(fmt.Sprint(recovered)))
 		response.Error(c, app_errors.ErrInternalServer)
 		c.Abort()
 	})
@@ -226,7 +227,7 @@ func ErrorHandler() gin.HandlerFunc {
 			}
 
 			// Handle other errors
-			logrus.Errorf("Unhandled error: %v", err)
+			logrus.Errorf("Unhandled error: %s", utils.SanitizeText(err.Error()))
 			response.Error(c, app_errors.ErrInternalServer)
 		}
 	}

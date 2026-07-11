@@ -1,6 +1,7 @@
 package locales
 
 // Messages Chinese (Simplified) translations
+// #nosec G101 -- this static localization catalog contains UI labels about credentials, not credential values.
 var MessagesZhCN = map[string]string{
 	// Common messages
 	"success":        "操作成功",
@@ -60,6 +61,7 @@ var MessagesZhCN = map[string]string{
 	"validation.group_id_required":                           "需要提供group_id参数",
 	"validation.invalid_group_id_format":                     "无效的group_id格式",
 	"validation.keys_text_empty":                             "密钥文本不能为空",
+	"validation.key_search_requires_post":                    "完整密钥搜索必须通过 POST 请求提交",
 	"validation.file_required":                               "需要上传文件",
 	"validation.only_txt_supported":                          "仅支持.txt文件",
 	"validation.failed_to_open_file":                         "无法打开文件",

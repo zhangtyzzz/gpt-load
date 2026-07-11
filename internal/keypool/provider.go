@@ -1,18 +1,21 @@
 package keypool
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
+	"strconv"
+	"strings"
+	"time"
+
 	"gpt-load/internal/config"
 	"gpt-load/internal/encryption"
 	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
-	"math/rand"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -170,39 +173,11 @@ func (p *KeyProvider) SelectKeyWithAffinity(groupID uint, affinityHash string) (
 
 // isKeyInActiveList checks if a key ID is in the active keys list.
 func (p *KeyProvider) isKeyInActiveList(activeKeysListKey, keyIDStr string) (bool, error) {
-	// Get all members of the active keys list and check
-	// We use LLen to check if the list exists, then iterate
-	length, err := p.store.LLen(activeKeysListKey)
-	if err != nil {
-		return false, err
-	}
-	if length == 0 {
-		return false, nil
-	}
-
-	// For memory store, we need to check by trying to rotate and check
-	// This is a limitation - we'll use a different approach
-	// Check if key details exist and status is active
 	keyID, err := strconv.ParseUint(keyIDStr, 10, 64)
 	if err != nil {
 		return false, err
 	}
-
-	keyHashKey := fmt.Sprintf("key:%d", keyID)
-	keyDetails, err := p.store.HGetAll(keyHashKey)
-	if err != nil {
-		return false, err
-	}
-
-	if keyDetails["status"] != models.KeyStatusActive {
-		return false, nil
-	}
-
-	// Also verify it's in the active list by checking if the list contains this key
-	// The Rotate operation is atomic and verifies membership, so we'll use a lightweight check
-	// If the key is active in the hash, it should be in the list (unless there's a race condition)
-	// For correctness, we accept this small race window
-	return true, nil
+	return p.store.LContains(activeKeysListKey, uint(keyID))
 }
 
 // getKeyByID retrieves a key by its ID from the store.
@@ -372,6 +347,18 @@ func cooldownStoreKey(keyID uint) string {
 	return fmt.Sprintf("key:%d:cooldown", keyID)
 }
 
+func secureRandomDuration(reader io.Reader, maximum time.Duration) (time.Duration, error) {
+	if maximum <= 0 {
+		return 0, nil
+	}
+
+	value, err := cryptorand.Int(reader, big.NewInt(int64(maximum)))
+	if err != nil {
+		return 0, fmt.Errorf("generate secure retry jitter: %w", err)
+	}
+	return time.Duration(value.Int64()), nil
+}
+
 // executeTransactionWithRetry wraps a database transaction with a retry mechanism.
 func (p *KeyProvider) executeTransactionWithRetry(operation func(tx *gorm.DB) error) error {
 	const maxRetries = 3
@@ -385,8 +372,15 @@ func (p *KeyProvider) executeTransactionWithRetry(operation func(tx *gorm.DB) er
 			return nil
 		}
 
-		if strings.Contains(err.Error(), "database is locked") {
-			jitter := time.Duration(rand.Intn(int(maxJitter)))
+		if strings.Contains(err.Error(), "database is locked") && i < maxRetries-1 {
+			jitter, jitterErr := secureRandomDuration(cryptorand.Reader, maxJitter)
+			if jitterErr != nil {
+				// Jitter is an availability optimization, not a correctness
+				// requirement. Retain the bounded base delay if the operating
+				// system's secure random source is temporarily unavailable.
+				logrus.Debug("Secure retry jitter unavailable; using base delay")
+				jitter = 0
+			}
 			totalDelay := baseDelay + jitter
 			logrus.Debugf("Database is locked, retrying in %v... (attempt %d/%d)", totalDelay, i+1, maxRetries)
 			time.Sleep(totalDelay)
@@ -500,8 +494,20 @@ func (p *KeyProvider) handleFailure(apiKey *models.APIKey, group *models.Group, 
 func (p *KeyProvider) LoadKeysFromDB() error {
 	logrus.Debug("First time startup, loading keys from DB...")
 
+	// Initialize every current group, including groups with no active keys. This
+	// lets us rebuild each active list from the database without a namespace-wide
+	// cache clear that would also delete pending logs, tasks, affinity, or
+	// cooldown state.
+	var groupIDs []uint
+	if err := p.db.Model(&models.Group{}).Pluck("id", &groupIDs).Error; err != nil {
+		return fmt.Errorf("failed to load group IDs for key-pool rebuild: %w", err)
+	}
+	allActiveKeyIDs := make(map[uint][]any, len(groupIDs))
+	for _, groupID := range groupIDs {
+		allActiveKeyIDs[groupID] = nil
+	}
+
 	// 1. 分批从数据库加载并使用 Pipeline 写入 Redis
-	allActiveKeyIDs := make(map[uint][]any)
 	batchSize := 10000
 	var batchKeys []*models.APIKey
 
@@ -521,7 +527,7 @@ func (p *KeyProvider) LoadKeysFromDB() error {
 				pipeline.HSet(keyHashKey, keyDetails)
 			} else {
 				if err := p.store.HSet(keyHashKey, keyDetails); err != nil {
-					logrus.WithFields(logrus.Fields{"keyID": key.ID, "error": err}).Error("Failed to HSet key details")
+					return fmt.Errorf("failed to rebuild key hash for key %d: %w", key.ID, err)
 				}
 			}
 
@@ -542,15 +548,14 @@ func (p *KeyProvider) LoadKeysFromDB() error {
 		return fmt.Errorf("failed during batch processing of keys: %w", err)
 	}
 
-	// 2. 更新所有分组的 active_keys 列表
+	// 2. Rebuild every current group's active list. Existing key hashes are
+	// overwritten above; stale, unreferenced hashes are not reachable through a
+	// group list and can be removed by explicit maintenance instead of startup.
 	logrus.Info("Updating active key lists for all groups...")
-	for groupID, activeIDs := range allActiveKeyIDs {
-		if len(activeIDs) > 0 {
-			activeKeysListKey := fmt.Sprintf("group:%d:active_keys", groupID)
-			p.store.Delete(activeKeysListKey)
-			if err := p.store.LPush(activeKeysListKey, activeIDs...); err != nil {
-				logrus.WithFields(logrus.Fields{"groupID": groupID, "error": err}).Error("Failed to LPush active keys for group")
-			}
+	for _, groupID := range groupIDs {
+		activeKeysListKey := fmt.Sprintf("group:%d:active_keys", groupID)
+		if err := p.store.ReplaceList(activeKeysListKey, allActiveKeyIDs[groupID]...); err != nil {
+			return fmt.Errorf("failed to replace active key list for group %d: %w", groupID, err)
 		}
 	}
 

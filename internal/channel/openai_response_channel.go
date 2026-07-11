@@ -109,7 +109,7 @@ func (ch *OpenAIResponseChannel) ValidateKey(ctx context.Context, apiKey *models
 
 	resp, err := ch.HTTPClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("failed to send validation request: %w", err)
+		return false, fmt.Errorf("failed to send validation request: %s", utils.SanitizeKnownSecrets(err.Error(), apiKey.KeyValue))
 	}
 	defer resp.Body.Close()
 
@@ -122,7 +122,7 @@ func (ch *OpenAIResponseChannel) ValidateKey(ctx context.Context, apiKey *models
 		return false, fmt.Errorf("key is invalid (status %d), but failed to read error body: %w", resp.StatusCode, err)
 	}
 
-	parsedError := app_errors.ParseUpstreamError(errorBody)
+	parsedError := utils.SanitizeKnownSecrets(app_errors.ParseUpstreamError(errorBody), apiKey.KeyValue)
 
 	return false, fmt.Errorf("[status %d] %s", resp.StatusCode, parsedError)
 }

@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"fmt"
+	"gpt-load/internal/utils"
 	"net"
 	"net/http"
 	"net/url"
@@ -89,7 +90,7 @@ func (m *HTTPClientManager) GetClient(config *Config) *http.Client {
 	if config.ProxyURL != "" {
 		proxyURL, err := url.Parse(config.ProxyURL)
 		if err != nil {
-			logrus.Warnf("Invalid proxy URL '%s' provided, falling back to environment settings: %v", config.ProxyURL, err)
+			logrus.Warnf("Invalid proxy URL '%s' provided, falling back to environment settings: %s", utils.SanitizeText(config.ProxyURL), utils.SanitizeText(err.Error()))
 			transport.Proxy = http.ProxyFromEnvironment
 		} else {
 			transport.Proxy = http.ProxyURL(proxyURL)
