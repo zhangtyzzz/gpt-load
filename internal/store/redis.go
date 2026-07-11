@@ -76,11 +76,6 @@ func (s *RedisStore) Exists(key string) (bool, error) {
 	return val > 0, nil
 }
 
-// SetNX sets a key-value pair in Redis if the key does not already exist.
-func (s *RedisStore) SetNX(key string, value []byte, ttl time.Duration) (bool, error) {
-	return s.client.SetNX(context.Background(), s.prefixKey(key), value, ttl).Result()
-}
-
 // Close closes the Redis client connection.
 func (s *RedisStore) Close() error {
 	return s.client.Close()

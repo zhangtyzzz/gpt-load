@@ -55,6 +55,7 @@ var MessagesEnUS = map[string]string{
 	"validation.test_model_required":                         "Test model is required",
 	"validation.invalid_copy_keys_value":                     "Invalid copy_keys value. Must be 'none', 'valid_only', or 'all'",
 	"validation.invalid_channel_type":                        "Invalid channel type. Supported types: {{.types}}",
+	"validation.invalid_channel_config":                      "Invalid channel configuration: {{.error}}",
 	"validation.test_model_empty":                            "Test model cannot be empty or contain only spaces",
 	"validation.invalid_status_value":                        "Invalid status value",
 	"validation.invalid_upstreams":                           "Invalid upstreams configuration: {{.error}}",

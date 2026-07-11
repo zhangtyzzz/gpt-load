@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -99,6 +100,7 @@ type GroupCreateParams struct {
 	ModelRedirectRules  map[string]string
 	ModelRedirectStrict bool
 	Config              map[string]any
+	ChannelConfig       json.RawMessage
 	HeaderRules         []models.HeaderRule
 	AffinityRules       []models.AffinityRule
 	ProxyKeys           string
@@ -122,6 +124,8 @@ type GroupUpdateParams struct {
 	ModelRedirectRules  map[string]string
 	ModelRedirectStrict *bool
 	Config              map[string]any
+	ChannelConfig       json.RawMessage
+	HasChannelConfig    bool
 	HeaderRules         *[]models.HeaderRule
 	AffinityRules       *[]models.AffinityRule
 	ProxyKeys           *string
@@ -184,7 +188,6 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 	if groupType != "standard" && groupType != "aggregate" {
 		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_group_type", nil)
 	}
-
 	var cleanedUpstreams datatypes.JSON
 	var testModel string
 	var validationEndpoint string
@@ -195,11 +198,15 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		cleanedUpstreams = datatypes.JSON("[]")
 		testModel = "-"
 	case "standard":
-		testModel = strings.TrimSpace(params.TestModel)
-		if testModel == "" {
-			return nil, NewI18nError(app_errors.ErrValidation, "validation.test_model_required", nil)
+		if channelType == channel.GenericHTTPChannelType {
+			testModel = "-"
+		} else {
+			testModel = strings.TrimSpace(params.TestModel)
+			if testModel == "" {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.test_model_required", nil)
+			}
 		}
-		cleaned, err := s.validateAndCleanUpstreams(params.Upstreams)
+		cleaned, err := s.validateAndCleanUpstreams(params.Upstreams, channelType)
 		if err != nil {
 			return nil, err
 		}
@@ -212,6 +219,10 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 	}
 
 	cleanedConfig, err := s.validateAndCleanConfig(params.Config)
+	if err != nil {
+		return nil, err
+	}
+	cleanedChannelConfig, err := s.validateAndCleanChannelConfig(channelType, groupType, params.ChannelConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +250,20 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 	if err := validateModelRedirectRules(params.ModelRedirectRules); err != nil {
 		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_model_redirect", map[string]any{"error": err.Error()})
 	}
+	if channelType == channel.GenericHTTPChannelType {
+		if len(params.ParamOverrides) > 0 || len(params.ModelRedirectRules) > 0 || params.ModelRedirectStrict {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": "generic-http does not support parameter overrides or model redirection"})
+		}
+		if groupType == "standard" {
+			_, cfg, parseErr := channel.NormalizeGenericHTTPConfig(cleanedChannelConfig)
+			if parseErr != nil {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": parseErr.Error()})
+			}
+			if err := validateGenericHeaderRules(params.HeaderRules, cfg); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	group := models.Group{
 		Name:                name,
@@ -254,6 +279,7 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		ModelRedirectRules:  convertToJSONMap(params.ModelRedirectRules),
 		ModelRedirectStrict: params.ModelRedirectStrict,
 		Config:              cleanedConfig,
+		ChannelConfig:       cleanedChannelConfig,
 		HeaderRules:         headerRulesJSON,
 		AffinityRules:       affinityRulesJSON,
 		ProxyKeys:           strings.TrimSpace(params.ProxyKeys),
@@ -362,6 +388,11 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 	if err := s.db.WithContext(ctx).First(&group, id).Error; err != nil {
 		return nil, app_errors.ParseDBError(err)
 	}
+	originalChannelType := group.ChannelType
+	destinationChannelType := originalChannelType
+	if params.ChannelType != nil {
+		destinationChannelType = strings.TrimSpace(*params.ChannelType)
+	}
 
 	tx := s.db.WithContext(ctx).Begin()
 	if err := tx.Error; err != nil {
@@ -386,7 +417,7 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 	}
 
 	if params.HasUpstreams {
-		cleanedUpstreams, err := s.validateAndCleanUpstreams(params.Upstreams)
+		cleanedUpstreams, err := s.validateAndCleanUpstreams(params.Upstreams, destinationChannelType)
 		if err != nil {
 			return nil, err
 		}
@@ -394,7 +425,7 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 	}
 
 	// Check if this group is used as a sub-group in aggregate groups before allowing critical changes
-	if group.GroupType != "aggregate" && (params.ChannelType != nil || params.ValidationEndpoint != nil) {
+	if group.GroupType != "aggregate" && (params.ChannelType != nil || params.ValidationEndpoint != nil || params.HasChannelConfig) {
 		count, err := s.aggregateGroupService.CountAggregateGroupsUsingSubGroup(ctx, group.ID)
 		if err != nil {
 			return nil, err
@@ -418,6 +449,17 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 						map[string]any{"count": count})
 				}
 			}
+
+			// A generic child is the aggregate transport contract. Updating it in
+			// isolation could make sibling routing state incompatible, so require
+			// callers to detach it before changing the normalized config.
+			if params.HasChannelConfig && group.ChannelType == channel.GenericHTTPChannelType {
+				currentNormalized, _, currentErr := channel.NormalizeGenericHTTPConfig(group.ChannelConfig)
+				nextNormalized, _, nextErr := channel.NormalizeGenericHTTPConfig(params.ChannelConfig)
+				if currentErr != nil || nextErr != nil || !bytes.Equal(currentNormalized, nextNormalized) {
+					return nil, NewI18nError(app_errors.ErrValidation, "validation.sub_group_referenced_cannot_modify", map[string]any{"count": count})
+				}
+			}
 		}
 	}
 
@@ -429,7 +471,6 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 		}
 		group.ChannelType = cleanedChannelType
 	}
-
 	if params.Sort != nil {
 		group.Sort = *params.Sort
 	}
@@ -440,6 +481,25 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.test_model_empty", nil)
 		}
 		group.TestModel = cleanedTestModel
+	}
+	if originalChannelType == channel.GenericHTTPChannelType && group.ChannelType != channel.GenericHTTPChannelType {
+		if !params.HasTestModel || strings.TrimSpace(params.TestModel) == "" || strings.TrimSpace(params.TestModel) == "-" {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.test_model_required", nil)
+		}
+	}
+
+	if params.HasChannelConfig || params.ChannelType != nil {
+		rawConfig := channelConfigForUpdate(group.ChannelConfig, originalChannelType, group.ChannelType, params.ChannelConfig, params.HasChannelConfig)
+		cleanedChannelConfig, err := s.validateAndCleanChannelConfig(group.ChannelType, group.GroupType, rawConfig)
+		if err != nil {
+			return nil, err
+		}
+		group.ChannelConfig = cleanedChannelConfig
+	}
+	if group.ChannelType == channel.GenericHTTPChannelType {
+		group.TestModel = "-"
+	} else if originalChannelType == channel.GenericHTTPChannelType {
+		group.ChannelConfig = datatypes.JSON("{}")
 	}
 
 	if params.ParamOverrides != nil {
@@ -502,6 +562,30 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 		group.AffinityRules = affinityRulesJSON
 	}
 
+	if group.ChannelType == channel.GenericHTTPChannelType {
+		// These legacy model-shaping features have no well-defined transparent
+		// HTTP semantics. Canonicalize them away even if an older client echoes
+		// stale values while switching channel type.
+		group.ParamOverrides = datatypes.JSONMap{}
+		group.ModelRedirectRules = datatypes.JSONMap{}
+		group.ModelRedirectStrict = false
+		group.TestModel = "-"
+
+		if group.GroupType == "standard" {
+			_, cfg, parseErr := channel.NormalizeGenericHTTPConfig(group.ChannelConfig)
+			if parseErr != nil {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": parseErr.Error()})
+			}
+			var currentHeaderRules []models.HeaderRule
+			if len(group.HeaderRules) > 0 {
+				_ = json.Unmarshal(group.HeaderRules, &currentHeaderRules)
+			}
+			if err := validateGenericHeaderRules(currentHeaderRules, cfg); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if err := tx.Save(&group).Error; err != nil {
 		return nil, app_errors.ParseDBError(err)
 	}
@@ -515,6 +599,23 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 	}
 
 	return &group, nil
+}
+
+func channelConfigForUpdate(current datatypes.JSON, originalChannel, destinationChannel string, supplied json.RawMessage, hasSupplied bool) json.RawMessage {
+	if originalChannel == channel.GenericHTTPChannelType && destinationChannel != channel.GenericHTTPChannelType {
+		// The generic payload belongs to the source channel. Clear it before
+		// validating the destination, even if an older client echoed it back.
+		return json.RawMessage("{}")
+	}
+	if hasSupplied {
+		return supplied
+	}
+	if destinationChannel != channel.GenericHTTPChannelType {
+		// Switching away from generic-http must not validate the old generic
+		// payload against the destination channel before it is cleared.
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(current)
 }
 
 // DeleteGroup removes a group and associated resources.
@@ -935,6 +1036,32 @@ func (s *GroupService) validateAndCleanConfig(configMap map[string]any) (map[str
 	return finalMap, nil
 }
 
+// validateAndCleanChannelConfig keeps transport-specific configuration out of
+// the existing Group.Config system-setting override namespace.
+func (s *GroupService) validateAndCleanChannelConfig(channelType, groupType string, raw json.RawMessage) (datatypes.JSON, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if channelType != channel.GenericHTTPChannelType {
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("{}")) {
+			return datatypes.JSON("{}"), nil
+		}
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": "channel_config is available only for generic-http"})
+	}
+	if groupType == "aggregate" {
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("{}")) {
+			return datatypes.JSON("{}"), nil
+		}
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": "generic-http aggregate channel_config must be empty and is derived from its sub-groups"})
+	}
+	if groupType != "standard" {
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": "invalid group type"})
+	}
+	normalized, _, err := channel.NormalizeGenericHTTPConfig(trimmed)
+	if err != nil {
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": err.Error()})
+	}
+	return datatypes.JSON(normalized), nil
+}
+
 // normalizeHeaderRules deduplicates and normalises header rules.
 func (s *GroupService) normalizeHeaderRules(rules []models.HeaderRule) (datatypes.JSON, error) {
 	if len(rules) == 0 {
@@ -949,12 +1076,30 @@ func (s *GroupService) normalizeHeaderRules(rules []models.HeaderRule) (datatype
 		if key == "" {
 			continue
 		}
+		if !channel.IsValidHTTPHeaderName(key) {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header %q is not a valid HTTP token", key)})
+		}
 		canonicalKey := http.CanonicalHeaderKey(key)
+		if channel.IsReservedProxyHeader(canonicalKey) {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header %s is reserved by the proxy transport", canonicalKey)})
+		}
+		action := strings.ToLower(strings.TrimSpace(rule.Action))
+		if action != "set" && action != "remove" {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header %s has invalid action %q", canonicalKey, rule.Action)})
+		}
+		value := rule.Value
+		if action == "set" {
+			if !channel.IsValidHTTPHeaderValue(value) {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header %s contains an invalid value", canonicalKey)})
+			}
+		} else {
+			value = ""
+		}
 		if seenKeys[canonicalKey] {
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.duplicate_header", map[string]any{"key": canonicalKey})
 		}
 		seenKeys[canonicalKey] = true
-		normalized = append(normalized, models.HeaderRule{Key: canonicalKey, Value: rule.Value, Action: rule.Action})
+		normalized = append(normalized, models.HeaderRule{Key: canonicalKey, Value: value, Action: action})
 	}
 
 	if len(normalized) == 0 {
@@ -967,6 +1112,23 @@ func (s *GroupService) normalizeHeaderRules(rules []models.HeaderRule) (datatype
 	}
 
 	return datatypes.JSON(headerRulesBytes), nil
+}
+
+func validateGenericHeaderRules(rules []models.HeaderRule, cfg channel.GenericHTTPConfig) error {
+	protected := make(map[string]struct{})
+	if cfg.Auth.Placement == channel.GenericAuthHeader {
+		protected[strings.ToLower(cfg.Auth.Name)] = struct{}{}
+	}
+	for _, rule := range rules {
+		if !channel.IsValidHTTPHeaderName(rule.Key) || (rule.Action != "set" && rule.Action != "remove") || (rule.Action == "set" && !channel.IsValidHTTPHeaderValue(rule.Value)) {
+			return NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header rule %q is invalid", rule.Key)})
+		}
+		name := strings.ToLower(strings.TrimSpace(rule.Key))
+		if _, blocked := protected[name]; blocked {
+			return NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": fmt.Sprintf("header %s is managed by generic-http configuration", http.CanonicalHeaderKey(rule.Key))})
+		}
+	}
+	return nil
 }
 
 // normalizeAffinityRules validates and serializes affinity rules to JSON.
@@ -997,7 +1159,7 @@ func normalizeAffinityRules(rules []models.AffinityRule) (datatypes.JSON, error)
 }
 
 // validateAndCleanUpstreams validates upstream definitions.
-func (s *GroupService) validateAndCleanUpstreams(upstreams json.RawMessage) (datatypes.JSON, error) {
+func (s *GroupService) validateAndCleanUpstreams(upstreams json.RawMessage, channelType string) (datatypes.JSON, error) {
 	if len(upstreams) == 0 {
 		return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": "upstreams field is required"})
 	}
@@ -1020,8 +1182,14 @@ func (s *GroupService) validateAndCleanUpstreams(upstreams json.RawMessage) (dat
 		if defs[i].URL == "" {
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": "upstream URL cannot be empty"})
 		}
-		if !strings.HasPrefix(defs[i].URL, "http://") && !strings.HasPrefix(defs[i].URL, "https://") {
-			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": fmt.Sprintf("invalid URL format for upstream: %s", defs[i].URL)})
+		if channelType == channel.GenericHTTPChannelType {
+			parsed, parseErr := channel.ParseAbsoluteHTTPURL(defs[i].URL)
+			if parseErr != nil {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": fmt.Sprintf("invalid generic HTTP upstream URL at index %d", i)})
+			}
+			defs[i].URL = parsed.String()
+		} else if !strings.HasPrefix(defs[i].URL, "http://") && !strings.HasPrefix(defs[i].URL, "https://") {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": fmt.Sprintf("invalid URL format for upstream at index %d", i)})
 		}
 		if defs[i].Weight < 0 {
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_upstreams", map[string]any{"error": "upstream weight must be a non-negative integer"})

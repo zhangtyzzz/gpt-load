@@ -55,6 +55,7 @@ var MessagesZhCN = map[string]string{
 	"validation.test_model_required":                         "测试模型是必需的",
 	"validation.invalid_copy_keys_value":                     "无效的copy_keys值。必须是'none'、'valid_only'或'all'",
 	"validation.invalid_channel_type":                        "无效的通道类型。支持的类型有: {{.types}}",
+	"validation.invalid_channel_config":                      "无效的渠道配置：{{.error}}",
 	"validation.test_model_empty":                            "测试模型不能为空或只有空格",
 	"validation.invalid_status_value":                        "无效的状态值",
 	"validation.invalid_upstreams":                           "upstreams配置错误: {{.error}}",

@@ -98,10 +98,10 @@ func (f *Factory) newBaseChannel(name string, group *models.Group) (*BaseChannel
 	}
 
 	var upstreamInfos []UpstreamInfo
-	for _, def := range defs {
+	for index, def := range defs {
 		u, err := url.Parse(def.URL)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse upstream url '%s' for %s channel: %s", utils.SanitizeText(def.URL), name, utils.SanitizeText(err.Error()))
+			return nil, fmt.Errorf("failed to parse upstream URL at index %d for %s channel", index, name)
 		}
 		if def.Weight <= 0 {
 			continue
@@ -118,7 +118,10 @@ func (f *Factory) newBaseChannel(name string, group *models.Group) (*BaseChannel
 		MaxIdleConnsPerHost:   group.EffectiveConfig.MaxIdleConnsPerHost,
 		ResponseHeaderTimeout: time.Duration(group.EffectiveConfig.ResponseHeaderTimeout) * time.Second,
 		ProxyURL:              group.EffectiveConfig.ProxyURL,
-		DisableCompression:    false,
+		// Generic HTTP is representation-transparent. Automatic decompression
+		// would silently change the body and strip Content-Encoding. Legacy
+		// channels keep their existing behavior.
+		DisableCompression:    name == GenericHTTPChannelType,
 		WriteBufferSize:       32 * 1024,
 		ReadBufferSize:        32 * 1024,
 		ForceAttemptHTTP2:     true,

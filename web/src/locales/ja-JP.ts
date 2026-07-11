@@ -153,6 +153,12 @@ export default {
     subGroupTooltip:
       "選択したチャンネルタイプに基づいて利用可能な標準グループを表示、ウェイトがトラフィック分配比率を決定",
     editGroup: "グループ編集",
+    discardGroupChangesTitle: "未保存のグループ変更を破棄しますか？",
+    discardGroupChangesDescription:
+      "このフォームを閉じるかページを離れると、未保存のグループ設定が失われます。",
+    discardGroupChanges: "変更を破棄",
+    continueEditingGroup: "編集を続ける",
+    groupFormLeaveWarning: "グループ設定が保存されていません。このまま移動しますか？",
     deleteGroup: "グループ削除",
     confirmDeleteGroup: "グループ {name} を削除してもよろしいですか？",
     dangerousOperation: "これは危険な操作で、グループ ",
@@ -348,6 +354,8 @@ export default {
       "ロードバランシング重み設定。重みはトラフィック分配比率を決定し、値が高いほど多くのトラフィックを受信します。重み0はアップストリームを無効化（リクエストなし）。例：重み2:1は前者が約67%のトラフィックを受信",
     addUpstream: "アップストリーム追加",
     groupConfig: "グループ設定",
+    configOptionsLoadFailed:
+      "グループ設定項目を読み込めませんでした。基本項目は引き続き編集できます",
     groupConfigTooltip:
       "タイムアウト、リトライ回数などのグループ固有の設定パラメーター。これらの設定はグローバルデフォルトを上書きします",
     config: "設定",
@@ -396,9 +404,9 @@ export default {
       "モデルリダイレクトルールのキーと値はすべて文字列である必要があります",
     modelRedirectEmptyModel: "モデル名を空にすることはできません",
     // Key アフィニティ
-    keyAffinity: "Key アフィニティ",
+    keyAffinity: "リクエスト Key 親和性",
     keyAffinityTooltip:
-      "同じ特性のリクエストを同じ API Key にルーティングするアフィニティルールを設定",
+      "リクエスト内のユーザー、テナント、またはカスタム値から API Key を固定します。子グループや上流ノードは固定しません。",
     affinityRuleName: "ルール名",
     affinityRuleNamePlaceholder: "例: user-affinity",
     affinityMatchPathRegex: "パスマッチ",
@@ -475,6 +483,161 @@ export default {
     onlyTxtFileSupported: ".txt ファイルのみサポート",
     fileImportedSuccessfully: "ファイルのインポートに成功しました",
     fileReadError: "ファイルの読み取りに失敗しました",
+  },
+  channels: {
+    unavailable: "現在利用できません",
+    catalogLoadFailed: "チャンネルカタログを読み込めないため、互換モードを使用しています",
+    catalogFallback:
+      "プリセットカタログを取得できませんでした。カスタム設定は使用できますが、保存前に内容を確認してください。",
+    serviceAndProtocol: "サービスと接続方式",
+    serviceAndProtocolDescription:
+      "検証済みプリセットから開始し、必要な場合だけ高度な転送設定を開きます。",
+    transparentProxy: "汎用 HTTP 透過プロキシ",
+    transparentProxyDescription:
+      "リクエストとレスポンスをそのまま転送し、クライアントのプロキシ認証情報だけを選択中のアップストリームキーに置き換えます。プリセットは入力補助です。",
+    selectPreset: "サービスプリセットを選択",
+    custom: "カスタム",
+    upstreamBaseUrl: "アップストリーム Base URL",
+    upstreamBaseUrlPlaceholder: "下の欄にアップストリーム URL を入力してください",
+    editUpstreamBelow: "下のアップストリーム欄で URL の変更や重み付きノードの追加ができます。",
+    upstreamCount: "{count} 個のアップストリームノードを設定済み",
+    advancedTransport: "高度な転送と検証",
+    maxRequestBody: "最大リクエスト本文（バイト）",
+    maxErrorBody: "最大エラーレスポンス本文（バイト）",
+    sections: {
+      transport: "転送",
+      transportDescription:
+        "自動モードの長時間接続では Accept: text/event-stream が必要です。この Header を制御できない場合は常にストリームを選択してください。レスポンスのメディアタイプは flush を有効にしますが、通常のリクエスト期限は解除しません。",
+      authentication: "認証情報の注入",
+      authenticationDescription:
+        "各リクエストでは選択中のアップストリームキーだけを指定 Header に注入し、完全な認証情報は表示しません。",
+      validation: "キー検証",
+      failover: "フェイルオーバー",
+    },
+    presetGroups: {
+      httpApi: "HTTP API",
+      hostedMcp: "Hosted MCP",
+      custom: "カスタム",
+    },
+    presetReplace: {
+      title: "すべてのアップストリームを置き換えますか？",
+      description:
+        "現在 {count} 個のノードがあります。プリセットを適用すると、旧プロバイダーへ認証情報が送られ続けないよう、すべての URL と設定を一括置換します。",
+      confirm: "置換して適用",
+    },
+    protocol: {
+      label: "転送プロトコル",
+      http: "通常の HTTP API",
+      mcp: "MCP Streamable HTTP",
+      httpShort: "HTTP",
+      mcpShort: "Hosted MCP",
+    },
+    auth: {
+      header: "リクエストヘッダー",
+      headerName: "認証 Header",
+      prefix: "値のプレフィックス",
+      prefixPlaceholder: "例: Bearer の後ろに空白を付ける",
+    },
+    stream: {
+      label: "レスポンスストリーム",
+      never: "常にバッファリング",
+      auto: "自動（Accept / レスポンスメディアタイプ）",
+      always: "常にストリーム",
+    },
+    validation: {
+      title: "キー検証",
+      description: "検証は同じ認証挿入ルールを使用し、完全なキーを URL やプレビューに出しません。",
+      enabled: "キー検証を有効化",
+      baseUrl: "検証 Base URL",
+      baseUrlPlaceholder: "空欄の場合はアップストリーム URL を使用",
+      method: "検証メソッド",
+      path: "検証パス",
+      validStatuses: "有効ステータスコード",
+      invalidStatuses: "無効ステータスコード",
+      headers: "追加 Header（JSON）",
+      body: "検証リクエスト本文（JSON）",
+      bodyPlaceholder: "GET/HEAD では空欄にしてください",
+      headersInvalid: "Header は値がすべて文字列の JSON オブジェクトにしてください",
+      headersProtected: "Header 名または値が無効か、プロキシが管理する認証 Header と競合しています",
+      bodyInvalid: "リクエスト本文は有効な JSON にしてください",
+      bodyTooLarge: "検証リクエスト本文は 64 KiB 以下にしてください",
+      statusesInvalid: "100〜599 のステータスコードをカンマ区切りで入力してください",
+      statusOverlap: "有効と無効のステータスコードは重複できません",
+      upstreamInvalid: "認証情報、Query、フラグメントを含まない絶対 HTTP(S) URL を入力してください",
+      baseUrlInvalid:
+        "検証 URL は認証情報、Query、フラグメントを含まない絶対 HTTP(S) URL にしてください",
+      pathInvalid: "パスは 1 個の / で始め、完全な URL は使用できません",
+      authNameInvalid: "認証名に使用できない文字が含まれています",
+      authNameProtected: "この Header はプロキシの転送ポリシーが管理します",
+      prefixInvalid: "値のプレフィックスに改行は使用できず、128 文字以内にしてください",
+      methodBodyInvalid: "GET と HEAD の検証リクエストに Body は設定できません",
+      fixErrors: "Generic HTTP 設定のエラーを修正してから保存してください",
+      allUpstreamsInvalid:
+        "すべてのアップストリームに、認証情報、Query、フラグメントを含まない絶対 HTTP(S) URL が必要です",
+    },
+    retry: {
+      description:
+        "フェイルオーバーステータスはエラー・キーヘルスポリシーに入ります。空欄ではすべての HTTP レスポンスを透過的に返し、安全なメソッドだけが転送失敗または指定ステータス後にキーを切り替えられます。",
+      postWarning:
+        "POST は安全なメソッドにも追加され、明示したフェイルオーバーステータスが返った場合だけキーを切り替えます。上流が受理済みの可能性があるリクエストを再送可能にしないでください。",
+      safeMethods: "転送失敗後に安全に再試行できるメソッド",
+      failoverStatuses: "フェイルオーバーステータス",
+      failoverStatusesPlaceholder: "空欄では全ステータスを透過的に返します",
+      methodsInvalid: "有効な HTTP メソッドをカンマ区切りで入力してください",
+      statusesInvalid: "300〜599 のステータスをカンマ区切りで入力するか、空欄にしてください",
+    },
+    integration: {
+      mcpTitle: "Hosted MCP プリセット接続",
+      mcpDescription:
+        "現在はステートレス（stateless）な Streamable HTTP のみをサポートし、リクエストごとに Key を個別ローテーションします。認証情報や上流ノードの固定が必要なステートフルセッションの互換性は保証しません。複数の Key はこの通常グループへまとめて追加でき、Key ごとの子グループは不要です。",
+      presetOnly: "プリセット補助",
+      stdioWarning:
+        "公式のローカル stdio パッケージは通常プロバイダー API へ直接接続し、このプロキシを自動利用しません。下の GPT Load URL を指定したリモート HTTP クライアントだけがこのグループを通ります。",
+      copyEndpoint: "MCP エンドポイントをコピー",
+      copyConfig: "汎用設定をコピー",
+      copied: "コピーしました",
+    },
+    aggregate: {
+      parentDerived:
+        "Generic HTTP 集約グループは親設定を保存しません。実行時ポリシーは子グループから派生し、すべての子設定は完全一致する必要があります。",
+      genericCompatibility:
+        "選択済みまたは追加済みの子と正規化後の Generic HTTP 設定が完全一致するグループだけを表示します。最初の子が集約契約を決めます。",
+      configMismatch: "Generic HTTP 集約のすべての子グループ設定は完全一致する必要があります",
+    },
+    presets: {
+      "tavily-http": {
+        name: "Tavily HTTP",
+        description: "検索、抽出、使用量 API を複数キーでローテーションします。",
+      },
+      "tavily-mcp": {
+        name: "Tavily Hosted MCP",
+        description: "Tavily 公式 Streamable HTTP MCP を中継します。",
+      },
+      "exa-http": {
+        name: "Exa HTTP",
+        description: "x-api-key 認証で Exa Search API に接続します。",
+      },
+      "exa-mcp": {
+        name: "Exa Hosted MCP",
+        description: "Exa 公式 Streamable HTTP MCP を中継します。",
+      },
+      "jina-reader": {
+        name: "Jina Reader",
+        description: "Web ページや文書をモデル向けコンテンツへ変換します。",
+      },
+      "jina-search": {
+        name: "Jina Search",
+        description: "Jina Search Foundation の Web 検索を利用します。",
+      },
+      "jina-foundation": {
+        name: "Jina Foundation",
+        description: "Jina Embeddings、Reranker などの基盤 API を利用します。",
+      },
+      custom: {
+        name: "カスタム HTTP",
+        description: "URL、認証挿入、検証、ストリーム動作を個別設定します。",
+      },
+    },
   },
   subGroups: {
     addSubGroup: "サブグループを追加",

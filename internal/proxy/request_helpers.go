@@ -1,14 +1,12 @@
 package proxy
 
 import (
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
+	"gpt-load/internal/channel"
 	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"gpt-load/internal/utils"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +16,17 @@ import (
 )
 
 const maxRetryAfterCooldown = 24 * time.Hour
+
+func shouldRetryClassifiedAttempt(
+	classification channel.ResponseClassification,
+	decision errorpolicy.Decision,
+	retryCount int,
+	maxRetries int,
+) bool {
+	return classification.AllowRetry &&
+		decision.OnRequest == errorpolicy.RequestActionRetryOtherKey &&
+		retryCount < maxRetries
+}
 
 func (ps *ProxyServer) applyParamOverrides(bodyBytes []byte, group *models.Group) ([]byte, error) {
 	if len(group.ParamOverrides) == 0 || len(bodyBytes) == 0 {
@@ -50,24 +59,29 @@ func logUpstreamError(context string, err error) {
 	}
 }
 
-// handleGzipCompression checks for gzip encoding and decompresses the body if necessary.
-func handleGzipCompression(resp *http.Response, bodyBytes []byte) []byte {
-	if resp.Header.Get("Content-Encoding") == "gzip" {
-		reader, gzipErr := gzip.NewReader(bytes.NewReader(bodyBytes))
-		if gzipErr != nil {
-			logrus.Warnf("Failed to create gzip reader for error body: %v", gzipErr)
-			return bodyBytes
-		}
-		defer reader.Close()
+// readUpstreamErrorBodyBounded limits both the encoded representation and all
+// decoded layers. A decoding failure returns no body bytes.
+func readUpstreamErrorBodyBounded(resp *http.Response, limit int64) ([]byte, error) {
+	return readResponseBodyBounded(resp, limit, limit)
+}
 
-		decompressedBody, readAllErr := io.ReadAll(reader)
-		if readAllErr != nil {
-			logrus.Warnf("Failed to decompress gzip error body: %v", readAllErr)
-			return bodyBytes
-		}
-		return decompressedBody
+func readResponseBodyBounded(resp *http.Response, encodedLimit, decodedLimit int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
 	}
-	return bodyBytes
+	contentEncodingValues := resp.Header.Values("Content-Encoding")
+	contentEncoding := strings.Join(contentEncodingValues, ",")
+	body, err := utils.ReadCompressedBodyBounded(resp.Body, contentEncoding, encodedLimit, decodedLimit)
+	if len(contentEncodingValues) > 0 {
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+		removeRepresentationIntegrityHeaders(resp.Header)
+		resp.ContentLength = -1
+	}
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func getAttemptedKeyIDs(c interface {

@@ -152,6 +152,11 @@ export default {
     aggregateProxyKeysTooltip: "聚合分组的代理密钥，留空则使用全局代理密钥",
     subGroupTooltip: "根据所选渠道类型显示可用的标准分组，权重决定流量分配比例",
     editGroup: "编辑分组",
+    discardGroupChangesTitle: "放弃未保存的分组更改？",
+    discardGroupChangesDescription: "关闭表单或离开当前页面会丢失尚未保存的分组配置。",
+    discardGroupChanges: "放弃更改",
+    continueEditingGroup: "继续编辑",
+    groupFormLeaveWarning: "分组配置尚未保存，确定要离开吗？",
     deleteGroup: "删除分组",
     confirmDeleteGroup: "确定要删除分组 {name} 吗？",
     dangerousOperation: "这是一个危险的操作，将删除分组 ",
@@ -340,6 +345,7 @@ export default {
       "负载均衡权重配置。权重决定流量分配比例，数值越大获得的流量越多。权重为0时禁用该上游（不接收任何请求）。示例：权重2:1表示前者获得约67%的流量",
     addUpstream: "添加上游地址",
     groupConfig: "分组配置",
+    configOptionsLoadFailed: "分组配置项加载失败，仍可继续编辑基础字段",
     groupConfigTooltip:
       "针对此分组的专用配置参数，如超时时间、重试次数等。这些配置会覆盖全局默认设置",
     config: "配置",
@@ -380,8 +386,9 @@ export default {
     modelRedirectInvalidFormat: "模型重定向规则的键值必须都是字符串",
     modelRedirectEmptyModel: "模型名称不能为空",
     // Key 亲和性
-    keyAffinity: "Key 亲和性",
-    keyAffinityTooltip: "配置 Key 亲和性规则，使相同特征的请求优先路由到同一个 API Key",
+    keyAffinity: "请求 Key 亲和",
+    keyAffinityTooltip:
+      "根据请求中已有的用户、租户或自定义字段固定 API Key；它不固定子分组或上游节点。",
     affinityRuleName: "规则名称",
     affinityRuleNamePlaceholder: "例如: user-affinity",
     affinityMatchPathRegex: "路径匹配",
@@ -458,6 +465,157 @@ export default {
     onlyTxtFileSupported: "仅支持 .txt 文件",
     fileImportedSuccessfully: "文件导入成功",
     fileReadError: "文件读取失败",
+  },
+  channels: {
+    unavailable: "当前不可用",
+    catalogLoadFailed: "渠道目录加载失败，已使用兼容模式",
+    catalogFallback: "未获取到预设目录。你仍可使用自定义配置，保存前请仔细核对。",
+    serviceAndProtocol: "服务与接入方式",
+    serviceAndProtocolDescription: "先选择经过验证的服务预设，再按需展开高级传输配置。",
+    transparentProxy: "通用 HTTP 透明代理",
+    transparentProxyDescription:
+      "原样转发请求与响应，只替换客户端代理凭据并注入轮询到的上游 Key。预设仅用于自动填写配置。",
+    selectPreset: "选择服务预设",
+    custom: "自定义",
+    upstreamBaseUrl: "上游基础地址",
+    upstreamBaseUrlPlaceholder: "请在下方填写上游地址",
+    editUpstreamBelow: "可在下方的上游地址区域修改或增加权重节点。",
+    upstreamCount: "已配置 {count} 个上游节点",
+    advancedTransport: "高级传输与校验",
+    maxRequestBody: "最大请求体（字节）",
+    maxErrorBody: "最大错误响应体（字节）",
+    sections: {
+      transport: "传输",
+      transportDescription:
+        "自动模式下，长连接客户端必须发送 Accept: text/event-stream；无法控制请求头时请选择始终流式。响应媒体类型只决定增量刷新，不会解除普通请求的总超时。",
+      authentication: "认证注入",
+      authenticationDescription:
+        "每次请求只把当前轮询到的上游 Key 注入指定 Header，不在页面展示完整凭据。",
+      validation: "Key 校验",
+      failover: "失败切换",
+    },
+    presetGroups: {
+      httpApi: "HTTP API",
+      hostedMcp: "Hosted MCP",
+      custom: "自定义",
+    },
+    presetReplace: {
+      title: "替换全部上游节点？",
+      description:
+        "当前有 {count} 个上游节点。应用预设会用预设地址和完整配置原子替换它们，避免旧厂商地址继续收到凭据。",
+      confirm: "替换并应用",
+    },
+    protocol: {
+      label: "传输协议",
+      http: "普通 HTTP API",
+      mcp: "MCP Streamable HTTP",
+      httpShort: "HTTP",
+      mcpShort: "Hosted MCP",
+    },
+    auth: {
+      header: "请求头",
+      headerName: "认证 Header",
+      prefix: "值前缀",
+      prefixPlaceholder: "例如 Bearer（末尾保留空格）",
+    },
+    stream: {
+      label: "响应流模式",
+      never: "始终缓冲",
+      auto: "自动（Accept / 响应媒体类型）",
+      always: "始终流式",
+    },
+    validation: {
+      title: "密钥校验",
+      description: "校验请求使用同一套密钥注入规则，但不会把完整密钥写入 URL 或预览。",
+      enabled: "启用密钥校验",
+      baseUrl: "校验基础地址",
+      baseUrlPlaceholder: "留空则使用上游地址",
+      method: "校验方法",
+      path: "校验路径",
+      validStatuses: "有效状态码",
+      invalidStatuses: "失效状态码",
+      headers: "附加 Header（JSON）",
+      body: "校验请求体（JSON）",
+      bodyPlaceholder: "GET/HEAD 必须留空",
+      headersInvalid: "Header 必须是值均为字符串的 JSON 对象",
+      headersProtected: "Header 名称或值无效，或与代理管理的认证 Header 冲突",
+      bodyInvalid: "请求体必须是有效 JSON",
+      bodyTooLarge: "校验请求体不能超过 64 KiB",
+      statusesInvalid: "请输入 100–599 的状态码，并用英文逗号分隔",
+      statusOverlap: "有效和失效状态码不能重叠",
+      upstreamInvalid: "请输入无凭据、无 Query、无片段标识的 HTTP(S) 绝对地址",
+      baseUrlInvalid: "校验地址必须是无凭据、无 Query、无片段标识的 HTTP(S) 绝对地址",
+      pathInvalid: "路径必须以单个 / 开头，不能填写完整 URL",
+      authNameInvalid: "认证名称包含非法字符",
+      authNameProtected: "该 Header 由代理传输规则管理，不能用于注入密钥",
+      prefixInvalid: "值前缀不能包含换行符，且不能超过 128 个字符",
+      methodBodyInvalid: "GET 和 HEAD 校验请求不能包含 Body",
+      fixErrors: "请先修正通用 HTTP 配置中的错误",
+      allUpstreamsInvalid: "每个上游都必须是无凭据、无 Query、无片段标识的 HTTP(S) 绝对地址",
+    },
+    retry: {
+      description:
+        "失败状态码会进入错误/健康策略；留空则所有 HTTP 响应透明返回。只有安全方法中的请求才允许因传输失败或这些状态码自动换 Key。",
+      postWarning:
+        "POST 必须同时列入安全方法且命中明确的失败状态码才会自动换 Key；不要允许重放可能已被上游接收的请求。",
+      safeMethods: "传输失败可安全重试的方法",
+      failoverStatuses: "失败切换状态码",
+      failoverStatusesPlaceholder: "留空表示透明返回全部状态",
+      methodsInvalid: "请输入合法的 HTTP 方法并用英文逗号分隔",
+      statusesInvalid: "请输入 300–599 的状态码并用英文逗号分隔，或留空",
+    },
+    integration: {
+      mcpTitle: "Hosted MCP 预设接入",
+      mcpDescription:
+        "当前仅支持无状态（stateless）Streamable HTTP：每个请求独立轮询 Key；需要固定认证或上游节点的有状态会话暂不承诺兼容。多把 Key 直接导入当前普通分组即可，无需为每把 Key 建子分组。",
+      presetOnly: "预设辅助",
+      stdioWarning:
+        "厂商官方本地 stdio 包通常直连厂商 API，不会自动经过此代理。只有指向下方 GPT Load 地址的远程 HTTP 客户端才会走本分组。",
+      copyEndpoint: "复制 MCP 地址",
+      copyConfig: "复制通用配置",
+      copied: "已复制",
+    },
+    aggregate: {
+      parentDerived:
+        "Generic HTTP 聚合组不保存父级代理配置；运行时从子分组派生，所有子分组配置必须完全一致。",
+      genericCompatibility:
+        "仅显示与已选或已添加子分组的标准化 Generic HTTP 配置完全一致的分组；首个子分组确定聚合契约。",
+      configMismatch: "Generic HTTP 聚合组的所有子分组配置必须完全一致",
+    },
+    presets: {
+      "tavily-http": {
+        name: "Tavily HTTP",
+        description: "搜索、提取与用量 API，支持多 Key 轮询。",
+      },
+      "tavily-mcp": {
+        name: "Tavily Hosted MCP",
+        description: "中继 Tavily 官方 Streamable HTTP MCP。",
+      },
+      "exa-http": {
+        name: "Exa HTTP",
+        description: "通过 x-api-key 访问 Exa Search API。",
+      },
+      "exa-mcp": {
+        name: "Exa Hosted MCP",
+        description: "中继 Exa 官方 Streamable HTTP MCP。",
+      },
+      "jina-reader": {
+        name: "Jina Reader",
+        description: "将网页与文档转换为适合模型读取的内容。",
+      },
+      "jina-search": {
+        name: "Jina Search",
+        description: "使用 Jina Search Foundation Web Search。",
+      },
+      "jina-foundation": {
+        name: "Jina Foundation",
+        description: "访问 Jina Embeddings、Reranker 等基础 API。",
+      },
+      custom: {
+        name: "自定义 HTTP",
+        description: "自行配置地址、认证注入、校验与流式行为。",
+      },
+    },
   },
   subGroups: {
     addSubGroup: "添加子分组",

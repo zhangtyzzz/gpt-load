@@ -193,6 +193,20 @@ func (gm *GroupManager) GetGroupByName(name string) (*models.Group, error) {
 	return group, nil
 }
 
+// GetGroupByID retrieves a group from the same immutable cache snapshot used
+// by name-based proxy routing.
+func (gm *GroupManager) GetGroupByID(id uint) (*models.Group, error) {
+	if gm.syncer == nil {
+		return nil, fmt.Errorf("GroupManager is not initialized")
+	}
+	for _, group := range gm.syncer.Get() {
+		if group.ID == id {
+			return group, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
 // Invalidate triggers a cache reload across all instances.
 func (gm *GroupManager) Invalidate() error {
 	if gm.syncer == nil {

@@ -55,6 +55,69 @@ func TestSanitizeRawQueryNeverReturnsMalformedSecret(t *testing.T) {
 	}
 }
 
+func TestSanitizeURLStringForLoggingRedactsUserInfoAndCredentialQueryValues(t *testing.T) {
+	secrets := []string{
+		"userinfo-user-secret",
+		"userinfo-password-secret",
+		"query-key-secret",
+		"query-api-key-secret",
+		"query-token-secret",
+		"query-access-token-secret",
+		"query-authorization-secret",
+	}
+	rawURL := "https://" + secrets[0] + ":" + secrets[1] + "@upstream.example.test/v1/search" +
+		"?key=" + secrets[2] +
+		"&api_key=" + secrets[3] +
+		"&token=" + secrets[4] +
+		"&access_token=" + secrets[5] +
+		"&authorization=" + secrets[6] +
+		"&model=gpt-4&page=2"
+
+	sanitized := SanitizeURLStringForLogging(rawURL)
+	for _, secret := range secrets {
+		if strings.Contains(sanitized, secret) {
+			t.Fatalf("sanitized URL leaked %q: %s", secret, sanitized)
+		}
+	}
+
+	parsed, err := url.Parse(sanitized)
+	if err != nil {
+		t.Fatalf("sanitized URL is invalid: %v", err)
+	}
+	if parsed.User != nil {
+		t.Fatalf("sanitized URL retained userinfo: %s", sanitized)
+	}
+	query := parsed.Query()
+	for _, name := range []string{"key", "api_key", "token", "access_token", "authorization"} {
+		if got := query.Get(name); got != RedactedValue {
+			t.Errorf("%s = %q, want %q", name, got, RedactedValue)
+		}
+	}
+	if got := query.Get("model"); got != "gpt-4" {
+		t.Errorf("model = %q, want gpt-4", got)
+	}
+	if got := query.Get("page"); got != "2" {
+		t.Errorf("page = %q, want 2", got)
+	}
+}
+
+func TestSanitizeURLStringForLoggingRejectsMalformedEncodedCredentialName(t *testing.T) {
+	const secret = "malformed-encoded-query-secret"
+	rawURL := "https://upstream.example.test/search?k%65y=" + secret + "%zz&model=gpt-4"
+	got := SanitizeURLStringForLogging(rawURL)
+	if strings.Contains(got, secret) {
+		t.Fatalf("malformed URL leaked encoded query credential: %q", got)
+	}
+	if !strings.Contains(got, RedactedValue) {
+		t.Fatalf("malformed query did not fail closed: %q", got)
+	}
+
+	malformedPath := "https://upstream.example.test/bad%zz?k%65y=" + secret
+	if got := SanitizeURLStringForLogging(malformedPath); got != RedactedValue {
+		t.Fatalf("unparseable URL = %q, want %q", got, RedactedValue)
+	}
+}
+
 func TestKeyFingerprintUsesOnlyOneWayHash(t *testing.T) {
 	const hash = "ABCDEF0123456789ABCDEF0123456789"
 	if got, want := KeyFingerprint(hash), "fp:abcdef012345"; got != want {
@@ -165,6 +228,22 @@ func TestSanitizeKnownSecretsRedactsUnlabelledAndEncodedEchoes(t *testing.T) {
 	}
 	if !strings.Contains(got, RedactedValue) {
 		t.Fatalf("SanitizeKnownSecrets did not leave a redaction marker: %s", got)
+	}
+}
+
+func TestSanitizeKnownSecretsFailsClosedForNonCanonicalReversibleEncodings(t *testing.T) {
+	const secret = `sk-live/a+b="private"`
+	unicodeEncoded := `\u0073\u006b\u002d\u006c\u0069\u0076\u0065\u002f\u0061\u002b\u0062\u003d\u0022\u0070\u0072\u0069\u0076\u0061\u0074\u0065\u0022`
+	tests := []string{
+		`upstream echoed sk-live%2fa%2bb%3d%22private%22`,
+		`{"message":"sk-live\/a+b=\"private\""}`,
+		`{"message":"` + unicodeEncoded + `"}`,
+		`{"message":"sk-live%252fa%252bb%253d%2522private%2522"}`,
+	}
+	for _, input := range tests {
+		if got := SanitizeKnownSecrets(input, secret); got != RedactedValue {
+			t.Fatalf("encoded secret did not fail closed: %q", got)
+		}
 	}
 }
 

@@ -1,16 +1,18 @@
 package proxy
 
 import (
+	"fmt"
 	"gpt-load/internal/channel"
 	"gpt-load/internal/models"
 	"gpt-load/internal/utils"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
+
+const maxModelListResponseBytes = int64(16 << 20)
 
 // shouldInterceptModelList checks if this is a model list request that should be intercepted
 func shouldInterceptModelList(path string, method string) bool {
@@ -25,30 +27,32 @@ func shouldInterceptModelList(path string, method string) bool {
 }
 
 // handleModelListResponse processes the model list response and applies filtering based on redirect rules
-func (ps *ProxyServer) handleModelListResponse(c *gin.Context, resp *http.Response, group *models.Group, channelHandler channel.ChannelProxy) {
-	// Read the upstream response body
-	bodyBytes, err := io.ReadAll(resp.Body)
+func (ps *ProxyServer) handleModelListResponse(c *gin.Context, resp *http.Response, group *models.Group, channelHandler channel.ChannelProxy, apiKey *models.APIKey) (int, error) {
+	// Model-list responses are transformed in memory, so both compressed input
+	// and decoded output must be bounded and fully decoded before parsing.
+	bodyBytes, err := readResponseBodyBounded(resp, maxModelListResponseBytes, maxModelListResponseBytes)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to read model list response body")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
-		return
-	}
-
-	// Decompress response data based on Content-Encoding
-	contentEncoding := resp.Header.Get("Content-Encoding")
-	decompressed, err := utils.DecompressResponse(contentEncoding, bodyBytes)
-	if err != nil {
-		logrus.WithError(err).Warn("Decompression failed, using original data")
-		decompressed = bodyBytes
+		safeError := utils.SanitizeText(err.Error())
+		if apiKey != nil {
+			safeError = utils.SanitizeKnownSecrets(safeError, apiKey.KeyValue)
+		}
+		logrus.WithField("error", safeError).Error("Failed to read bounded model list response body")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to read upstream model list response"})
+		return http.StatusBadGateway, fmt.Errorf("model_list_upstream_read_failed: %s", safeError)
 	}
 
 	// Transform model list (returns map[string]any directly, no marshaling)
-	response, err := channelHandler.TransformModelList(c.Request, decompressed, group)
+	response, err := channelHandler.TransformModelList(c.Request, bodyBytes, group)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to transform model list")
+		safeError := utils.SanitizeText(err.Error())
+		if apiKey != nil {
+			safeError = utils.SanitizeKnownSecrets(safeError, apiKey.KeyValue)
+		}
+		logrus.WithField("error", safeError).Error("Failed to transform model list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process response"})
-		return
+		return http.StatusInternalServerError, fmt.Errorf("model_list_transform_failed: %s", safeError)
 	}
 
 	c.JSON(http.StatusOK, response)
+	return http.StatusOK, nil
 }

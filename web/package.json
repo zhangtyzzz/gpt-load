@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "GPT Load Balancer Frontend - A modern Vue 3 frontend for GPT load balancing service",
   "type": "module",
+  "engines": {
+    "node": "24.18.0"
+  },
   "keywords": ["vue3", "typescript", "vite", "naive-ui", "gpt-load", "frontend"],
   "author": "zhangtyzzz",
   "license": "MIT",
@@ -41,7 +44,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
-    "@types/node": "^22.15.24",
+    "@types/node": "^24.0.0",
     "@typescript-eslint/eslint-plugin": "^8.35.1",
     "@typescript-eslint/parser": "^8.35.1",
     "@vitejs/plugin-vue": "^5.2.4",

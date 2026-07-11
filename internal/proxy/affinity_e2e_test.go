@@ -50,6 +50,10 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 	)
 	upstreamSlotByKey := map[string]string{keyAlpha: "alpha", keyBeta: "beta"}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if controlValue := r.Header.Get(middleware.ProxyKeyHeader); controlValue != "" {
+			http.Error(w, "proxy control header reached upstream", http.StatusBadRequest)
+			return
+		}
 		selectedKey := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		selectedSlot, found := upstreamSlotByKey[selectedKey]
 		if !found {
@@ -100,6 +104,14 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal upstreams: %v", err)
 	}
+	headerRules, err := json.Marshal([]models.HeaderRule{{
+		Key:    middleware.ProxyKeyHeader,
+		Value:  "must-never-reach-upstream",
+		Action: "set",
+	}})
+	if err != nil {
+		t.Fatalf("marshal header rules: %v", err)
+	}
 
 	group := models.Group{
 		Name:               groupName,
@@ -110,6 +122,7 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 		ValidationEndpoint: "/v1/chat/completions",
 		ChannelType:        "openai",
 		TestModel:          "e2e-model",
+		HeaderRules:        datatypes.JSON(headerRules),
 		AffinityRules:      datatypes.JSON(affinityRules),
 		Config: datatypes.JSONMap{
 			"request_timeout":          5,
@@ -175,7 +188,7 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 	proxyHTTPServer := httptest.NewServer(router)
 	t.Cleanup(proxyHTTPServer.Close)
 
-	request := func(sessionID string) string {
+	request := func(sessionID string, dedicatedCarrier bool) string {
 		t.Helper()
 		body := []byte(`{"model":"e2e-model","messages":[{"role":"user","content":"affinity check"}]}`)
 		req, err := http.NewRequest(
@@ -186,7 +199,15 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create proxy request: %v", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+proxyKey)
+		if dedicatedCarrier {
+			// A legacy LLM channel accepts the dedicated proxy carrier, removes both
+			// control/auth candidates, then injects only the selected upstream key.
+			req.Header.Set("Authorization", "Bearer upstream-business-credential")
+			req.Header.Set(middleware.ProxyKeyHeader, proxyKey)
+		} else {
+			// Preserve the original Authorization-only client contract as well.
+			req.Header.Set("Authorization", "Bearer "+proxyKey)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-ID", sessionID)
 
@@ -212,19 +233,19 @@ func TestProxyAffinityEndToEnd(t *testing.T) {
 		sessionA = "session-a"
 		sessionB = "session-b"
 	)
-	selectedAFirst := request(sessionA)
+	selectedAFirst := request(sessionA, false)
 	waitForAffinityMapping(t, affinityManager, group.ID, sessionA, keyIDBySlot[selectedAFirst])
-	selectedASecond := request(sessionA)
+	selectedASecond := request(sessionA, true)
 	if selectedASecond != selectedAFirst {
 		t.Fatalf("session A changed key: first = %q, second = %q", selectedAFirst, selectedASecond)
 	}
 
-	selectedBFirst := request(sessionB)
+	selectedBFirst := request(sessionB, false)
 	if selectedBFirst == selectedAFirst {
 		t.Fatalf("independent session did not advance round-robin: A = %q, B = %q", selectedAFirst, selectedBFirst)
 	}
 	waitForAffinityMapping(t, affinityManager, group.ID, sessionB, keyIDBySlot[selectedBFirst])
-	selectedBSecond := request(sessionB)
+	selectedBSecond := request(sessionB, true)
 	if selectedBSecond != selectedBFirst {
 		t.Fatalf("session B changed key: first = %q, second = %q", selectedBFirst, selectedBSecond)
 	}

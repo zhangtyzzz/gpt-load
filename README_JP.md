@@ -8,7 +8,7 @@
 
 複数のAIサービスを統合する必要がある企業や開発者向けに特別に設計された、高性能でエンタープライズグレードのAI APIトランスペアレントプロキシサービス。Goで構築され、インテリジェントなキー管理、ロードバランシング、包括的な監視機能を備え、高並行性の本番環境向けに設計されています。
 
-この独立ディストリビューションは
+この独立プロジェクトは
 [`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load) で継続的に管理されています。
 プロジェクトのドキュメント、リリースノート、サポート窓口はこのリポジトリを正とします。
 
@@ -25,6 +25,7 @@
 - **高性能設計**: ゼロコピーストリーミング、接続プール再利用、アトミック操作
 - **本番対応**: グレースフルシャットダウン、エラー復旧、包括的なセキュリティメカニズム
 - **デュアル認証**: 管理とプロキシの分離認証、プロキシ認証はグローバルおよびグループレベルのキーをサポート
+- **汎用HTTPとHosted MCP（`v1.6.0-beta.3`）**: Tavily、Exa、Jinaプリセットで透過HTTPと複数キーのローテーションをサポート。Hosted MCPは現在stateless Streamable HTTPを対象とします
 
 ## サポートされているAIサービス
 
@@ -33,12 +34,23 @@ GPT-Loadは、さまざまなAIサービスプロバイダーのネイティブA
 - **OpenAIフォーマット**: 公式OpenAI API、Azure OpenAI、その他のOpenAI互換サービス
 - **Google Geminiフォーマット**: Gemini Pro、Gemini Pro VisionなどのモデルのネイティブAPI
 - **Anthropic Claudeフォーマット**: Claudeシリーズモデル、高品質な会話とテキスト生成をサポート
+- **汎用HTTP / Hosted MCP**: Tavily、Exa、Jina、および認証・検証ルールを設定できるカスタムHTTPサービス
+
+> [!TIP]
+> 複数のTavily、Exa、Jinaキーをローテーションする場合、またはTavily/Exaの
+> Hosted MCPをGPT-Load経由で利用する場合は、
+> [Generic HTTP / Hosted MCPガイド（中国語）](GENERIC_HTTP_CN.md)を参照してください。
+> この機能は `v1.6.0-beta.3` に含まれます。テスト環境では移動する `beta` ではなく、
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3` を固定してください。ガイドでは
+> クライアント設定、stateless Hosted MCPの境界、集約グループ、stdioの制限、
+> フェイルオーバー境界、機密Headerの保護を説明しています。
 
 ## クイックスタート
 
 ### システム要件
 
 - Go 1.25+（ソースビルド用）
+- Node.js 24.18.0（フロントエンドおよびソースビルド用）
 - Docker（コンテナ化デプロイメント用）
 - MySQL、PostgreSQL、またはSQLite（データベースストレージ用）
 - Redis（キャッシュと分散調整用、オプション）
@@ -96,9 +108,9 @@ docker compose pull && docker compose down && docker compose up -d
 ```
 
 > [!IMPORTANT]
-> **v1.6.0-beta.1 アップグレード時の注意：**事前にデータベースをバックアップし、
+> **v1.6.0-beta.3 アップグレード時の注意：**事前にデータベースをバックアップし、
 > 移動する `beta` タグではなく、正確な
-> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.1` イメージを指定してください。
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3` イメージを指定してください。
 > 初回起動時に、過去の `request_logs.key_value` にある可逆値がバックグラウンドの
 > 小さなバッチで不可逆に削除されます。完全なKeyでリクエストログを検索する旧クライアントは、
 > GETクエリパラメータから `POST /api/logs/search` または
@@ -112,6 +124,11 @@ docker compose pull && docker compose down && docker compose up -d
 > Key APIは内部の `key_hash` をシリアライズしなくなり、外部クライアントはこの実装フィールドに
 > 依存できません。旧イメージだけをロールバックしても、削除済みの過去値は復元されません。復元には
 > アップグレード前のデータベースバックアップも必要です。
+> 既存のOpenAI、Gemini、Anthropic、OpenAI Responsesグループの動作は変わりません。
+> Generic HTTPのアップストリーム認証情報は設定したHeaderからのみ注入でき、Queryへの注入は
+> 意図的にサポートしません。`v1.6.0-beta.2` に戻してもGeneric HTTPグループのデータは
+> データベースに残りますが、そのバージョンではプロキシできません。完全に以前の動作へ戻す場合は、
+> アップグレード前のデータベースバックアップを復元してください。
 
 デプロイメント後：
 

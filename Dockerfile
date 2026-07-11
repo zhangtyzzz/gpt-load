@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:24.18.0-alpine3.24 AS builder
 
 ARG VERSION=1.0.0
 WORKDIR /build

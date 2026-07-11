@@ -1,14 +1,17 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
+	"gpt-load/internal/channel"
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
 	"gpt-load/internal/utils"
 
 	"github.com/sirupsen/logrus"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +25,7 @@ type SubGroupInput struct {
 type AggregateValidationResult struct {
 	ValidationEndpoint string
 	SubGroups          []models.GroupSubGroup
+	ChannelConfig      datatypes.JSON
 }
 
 // AggregateGroupService encapsulates aggregate group specific behaviours.
@@ -40,6 +44,10 @@ func NewAggregateGroupService(db *gorm.DB, groupManager *GroupManager) *Aggregat
 
 // ValidateSubGroups validates sub-groups with an optional existing validation endpoint for consistency check.
 func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelType string, inputs []SubGroupInput, existingEndpoint string) (*AggregateValidationResult, error) {
+	return s.validateSubGroups(ctx, channelType, inputs, existingEndpoint, nil)
+}
+
+func (s *AggregateGroupService) validateSubGroups(ctx context.Context, channelType string, inputs []SubGroupInput, existingEndpoint string, expectedChannelConfig []byte) (*AggregateValidationResult, error) {
 	if len(inputs) == 0 {
 		return nil, NewI18nError(app_errors.ErrValidation, "validation.sub_groups_required", nil)
 	}
@@ -69,6 +77,7 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 
 	subGroupMap := make(map[uint]models.Group, len(subGroupModels))
 	var validationEndpoint string
+	normalizedChannelConfig := append([]byte(nil), expectedChannelConfig...)
 
 	// If there's an existing endpoint, use it as the expected endpoint
 	if existingEndpoint != "" {
@@ -81,6 +90,17 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 		}
 		if sg.ChannelType != channelType {
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.sub_group_channel_mismatch", nil)
+		}
+		if channelType == channel.GenericHTTPChannelType {
+			normalized, _, normalizeErr := channel.NormalizeGenericHTTPConfig(sg.ChannelConfig)
+			if normalizeErr != nil {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": normalizeErr.Error()})
+			}
+			if len(normalizedChannelConfig) == 0 {
+				normalizedChannelConfig = normalized
+			} else if !bytes.Equal(normalizedChannelConfig, normalized) {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": "all generic-http aggregate sub-groups must have identical normalized channel_config"})
+			}
 		}
 
 		// If no existing endpoint, use the first sub-group's effective endpoint
@@ -106,6 +126,7 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 	return &AggregateValidationResult{
 		ValidationEndpoint: validationEndpoint,
 		SubGroups:          resultSubGroups,
+		ChannelConfig:      datatypes.JSON(normalizedChannelConfig),
 	}, nil
 }
 
@@ -185,6 +206,7 @@ func (s *AggregateGroupService) AddSubGroups(ctx context.Context, groupID uint, 
 
 	// Check if there are existing sub groups and get their validation endpoint
 	var existingEndpoint string
+	var existingChannelConfig []byte
 	var existingSubGroups []models.GroupSubGroup
 	if err := s.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&existingSubGroups).Error; err != nil {
 		return err
@@ -194,11 +216,18 @@ func (s *AggregateGroupService) AddSubGroups(ctx context.Context, groupID uint, 
 		var existingGroup models.Group
 		if err := s.db.WithContext(ctx).First(&existingGroup, existingSubGroups[0].SubGroupID).Error; err == nil {
 			existingEndpoint = utils.GetValidationEndpoint(&existingGroup)
+			if group.ChannelType == channel.GenericHTTPChannelType {
+				normalized, _, normalizeErr := channel.NormalizeGenericHTTPConfig(existingGroup.ChannelConfig)
+				if normalizeErr != nil {
+					return NewI18nError(app_errors.ErrValidation, "validation.invalid_channel_config", map[string]any{"error": normalizeErr.Error()})
+				}
+				existingChannelConfig = normalized
+			}
 		}
 	}
 
 	// Validate sub groups with existing endpoint for consistency
-	result, err := s.ValidateSubGroups(ctx, group.ChannelType, inputs, existingEndpoint)
+	result, err := s.validateSubGroups(ctx, group.ChannelType, inputs, existingEndpoint, existingChannelConfig)
 	if err != nil {
 		return err
 	}

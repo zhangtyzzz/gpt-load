@@ -186,6 +186,7 @@ tramp
 config.local.json
 config.local.yaml
 config.local.yml
+/AGENTS.local.md
 
 # Certificates
 *.crt

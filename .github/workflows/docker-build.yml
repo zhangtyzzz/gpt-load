@@ -8,6 +8,11 @@ on:
   push:
     tags:
       - "v*"
+
+concurrency:
+  group: docker-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build_docker_image:
     name: Build Docker Image
@@ -20,28 +25,57 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate release tag
         shell: bash
         env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -Eeuo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]]; then
             echo "::error::Unsupported release tag: $RELEASE_TAG"
             exit 1
           fi
+          if [[ "$REF_TYPE" != "tag" || "$REF_NAME" != "$RELEASE_TAG" || "$GITHUB_REF" != "refs/tags/${RELEASE_TAG}" ]]; then
+            echo "::error::Release tag does not exactly match the pushed tag ref"
+            exit 1
+          fi
+
+      - name: Refuse to replace an image for a published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          if existing_draft="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            --jq '.draft' 2>release-query-error.log)"; then
+            if [[ "$existing_draft" != "true" ]]; then
+              echo "::error::Release ${RELEASE_TAG} is already published; refusing to replace its image"
+              exit 1
+            fi
+            echo "Release ${RELEASE_TAG} is still a draft and a staging image may be built"
+          elif grep -q 'HTTP 404' release-query-error.log; then
+            echo "No existing release for ${RELEASE_TAG}; a staging image may be built"
+          else
+            cat release-query-error.log >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -49,18 +83,18 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ghcr.io/${{ github.repository }}
           flavor: |
             latest=false
           tags: |
-            type=ref,event=tag
+            type=raw,value=build-${{ github.ref_name }}
 
-      - name: Build and push Docker image
+      - name: Build and push staging Docker image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -86,7 +120,7 @@ jobs:
       AUTH_KEY: release-smoke-admin-key-fixture-not-production
     steps:
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -118,10 +152,11 @@ jobs:
           pull_image "$IMAGE_REF"
           pull_image "$previous_image"
 
-      - name: Verify fresh install and previous stable upgrade
+      - name: Verify fresh install, upgrade, and Generic HTTP data plane
         shell: bash
         run: |
           set -Eeuo pipefail
+          umask 077
 
           run_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fresh_container="gpt-load-smoke-fresh-${run_suffix}"
@@ -131,12 +166,29 @@ jobs:
           upgrade_volume="gpt-load-smoke-upgrade-${run_suffix}"
           fresh_port=18081
           upgrade_port=18082
+          mock_port=18083
           group_name="release-smoke-upgrade-fixture"
+          generic_group_name="release-smoke-generic-http"
           previous_image="${IMAGE_REPOSITORY}:${PREVIOUS_STABLE_TAG}"
+          mock_pid=""
+          mock_script=""
 
           cleanup() {
             status=$?
             trap - EXIT
+
+            if [[ -n "$mock_pid" ]]; then
+              kill "$mock_pid" >/dev/null 2>&1 || true
+              wait "$mock_pid" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "$mock_script" ]]; then
+              rm -f "$mock_script"
+            fi
+            rm -f \
+              "${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-one.headers" \
+              "${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-two.headers" \
+              "${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-opaque.headers" \
+              "${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-app.log"
 
             if [[ "$status" -ne 0 ]]; then
               for container in "$fresh_container" "$old_container" "$upgraded_container"; do
@@ -219,12 +271,120 @@ jobs:
             echo "::error::Previous stable image did not create the upgrade fixture group"
             exit 1
           fi
+          upgrade_group_id="$(jq -er '.data.id' <<<"$create_response")"
 
           docker stop --time 20 "$old_container" >/dev/null
+
+          # Seed one legacy reversible request-log value while the previous
+          # image is stopped. The new image must remove it in the background
+          # without delaying readiness or exposing the value.
+          upgrade_mount="$(docker volume inspect --format '{{ .Mountpoint }}' "$upgrade_volume")"
+          export UPGRADE_DB_PATH="${upgrade_mount}/gpt-load.db"
+          export UPGRADE_GROUP_ID="$upgrade_group_id"
+          export LEGACY_LOG_ID="release-smoke-legacy-log"
+          export LEGACY_LOG_KEY="release-smoke-legacy-reversible-key-fixture"
+          sudo -E python3 - <<'PY'
+          import os
+          import sqlite3
+
+          connection = sqlite3.connect(os.environ["UPGRADE_DB_PATH"])
+          try:
+              connection.execute(
+                  """
+                  INSERT INTO request_logs (
+                      id, timestamp, group_id, group_name, key_value, key_hash,
+                      is_success, status_code, duration, request_type, is_stream
+                  ) VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, 1, 200, 1, 'final', 0)
+                  """,
+                  (
+                      os.environ["LEGACY_LOG_ID"],
+                      int(os.environ["UPGRADE_GROUP_ID"]),
+                      "release-smoke-upgrade-fixture",
+                      os.environ["LEGACY_LOG_KEY"],
+                      "release-smoke-legacy-hash",
+                  ),
+              )
+              connection.commit()
+          finally:
+              connection.close()
+          PY
+
+          # The exact image is tested against a local, protocol-neutral HTTP
+          # upstream. It returns non-secret key markers and a caller-selected
+          # retryable failure; GPT-Load must not rely on vendor payload or MCP
+          # method branches.
+          mock_script="${RUNNER_TEMP}/gpt-load-release-smoke-${run_suffix}.py"
+          cat >"$mock_script" <<'PY'
+          import json
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          from urllib.parse import parse_qs, urlsplit
+
+          KEY_MARKERS = {
+              "release-smoke-upstream-key-a-fixture": "alpha",
+              "release-smoke-upstream-key-b-fixture": "beta",
+          }
+
+          class Handler(BaseHTTPRequestHandler):
+              def handle_request(self):
+                  key = self.headers.get("X-Smoke-Key", "")
+                  marker = KEY_MARKERS.get(key)
+                  if marker is None:
+                      self.send_error(401)
+                      return
+
+                  length = min(int(self.headers.get("Content-Length", "0")), 65536)
+                  body = self.rfile.read(length).decode("utf-8", errors="replace")
+                  fail_marker = parse_qs(urlsplit(self.path).query).get("fail_marker", [""])[0]
+                  status = 500 if fail_marker == marker else 200
+                  payload = json.dumps(
+                      {
+                          "key_marker": marker,
+                          "method": self.command,
+                          "path": self.path,
+                          "body": body,
+                          "hop_header": self.headers.get("X-Smoke-Hop", ""),
+                          "user_agent": self.headers.get("User-Agent", ""),
+                          "accept_encoding": self.headers.get("Accept-Encoding", ""),
+                      }
+                  ).encode()
+                  self.send_response(status)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(payload)))
+                  self.send_header("X-Upstream-Secret-Echo", f"selected={key}")
+                  self.send_header("X-Smoke-Multi", "one")
+                  self.send_header("X-Smoke-Multi", "two")
+                  self.end_headers()
+                  self.wfile.write(payload)
+
+              do_GET = handle_request
+              do_POST = handle_request
+              do_PUT = handle_request
+
+              def log_message(self, _format, *_args):
+                  return
+
+          ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
+          PY
+          python3 "$mock_script" "$mock_port" &
+          mock_pid=$!
+          for _ in {1..30}; do
+            if curl --fail --silent \
+              -H 'X-Smoke-Key: release-smoke-upstream-key-a-fixture' \
+              "http://127.0.0.1:${mock_port}/ready" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! kill -0 "$mock_pid" 2>/dev/null; then
+            echo "::error::Local smoke upstream failed to start"
+            exit 1
+          fi
 
           docker run --detach \
             --name "$upgraded_container" \
             --publish "127.0.0.1:${upgrade_port}:3001" \
+            --add-host 'host.docker.internal:host-gateway' \
             --env "AUTH_KEY=${AUTH_KEY}" \
             --env 'DATABASE_DSN=/app/data/gpt-load.db' \
             --env 'LOG_ENABLE_FILE=false' \
@@ -242,6 +402,228 @@ jobs:
             echo "::error::Upgrade smoke test lost the v1.5.1 fixture group"
             exit 1
           fi
+
+          sudo -E python3 - <<'PY'
+          import os
+          import sqlite3
+          import time
+
+          deadline = time.monotonic() + 30
+          while time.monotonic() < deadline:
+              try:
+                  connection = sqlite3.connect(os.environ["UPGRADE_DB_PATH"], timeout=1)
+                  row = connection.execute(
+                      "SELECT key_value FROM request_logs WHERE id = ?",
+                      (os.environ["LEGACY_LOG_ID"],),
+                  ).fetchone()
+                  connection.close()
+                  if row is not None and row[0] == "":
+                      break
+              except sqlite3.OperationalError:
+                  pass
+              time.sleep(0.5)
+          else:
+              raise SystemExit("historical request-log cleanup did not finish")
+          PY
+
+          generic_proxy_key="release-smoke-generic-proxy-key-fixture"
+          upstream_key_a="release-smoke-upstream-key-a-fixture"
+          upstream_key_b="release-smoke-upstream-key-b-fixture"
+          generic_payload="$(jq -n \
+            --arg name "$generic_group_name" \
+            --arg upstream "http://host.docker.internal:${mock_port}" \
+            --arg proxy_key "$generic_proxy_key" \
+            '{
+              name: $name,
+              display_name: "Release smoke Generic HTTP",
+              description: "Exact image proxy, rotation, failover, restart, and redaction fixture",
+              group_type: "standard",
+              upstreams: [{url: $upstream, weight: 1}],
+              channel_type: "generic-http",
+              channel_config: {
+                version: 1,
+                preset_id: "custom",
+                auth: {placement: "header", name: "X-Smoke-Key", prefix: ""},
+                validation: {
+                  enabled: false,
+                  base_url: "",
+                  method: "",
+                  path: "",
+                  headers: {},
+                  body: null,
+                  valid_statuses: [],
+                  invalid_statuses: []
+                },
+                stream_mode: "auto",
+                retry: {safe_methods: ["GET", "HEAD"], failover_statuses: [500]},
+                max_request_body_bytes: 1048576,
+                max_error_body_bytes: 65536
+              },
+              sort: 2,
+              test_model: "",
+              validation_endpoint: "",
+              param_overrides: {},
+              model_redirect_rules: {},
+              model_redirect_strict: false,
+              config: {
+                max_retries: 1,
+                request_timeout: 10,
+                connect_timeout: 5,
+                response_header_timeout: 5,
+                blacklist_threshold: 100
+              },
+              header_rules: [],
+              affinity_rules: [],
+              proxy_keys: $proxy_key
+            }')"
+          generic_create_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${AUTH_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data "$generic_payload" \
+            "http://127.0.0.1:${upgrade_port}/api/groups")"
+          generic_group_id="$(jq -er '.data.id' <<<"$generic_create_response")"
+
+          key_payload="$(jq -n \
+            --argjson group_id "$generic_group_id" \
+            --arg keys "${upstream_key_a}
+          ${upstream_key_b}" \
+            '{group_id: $group_id, keys_text: $keys}')"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${AUTH_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data "$key_payload" \
+            "http://127.0.0.1:${upgrade_port}/api/keys/add-multiple" >/dev/null
+
+          proxy_base="http://127.0.0.1:${upgrade_port}/proxy/${generic_group_name}"
+          headers_one="${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-one.headers"
+          headers_two="${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-two.headers"
+          response_one="$(curl --fail --silent --show-error -D "$headers_one" \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            -H 'User-Agent:' \
+            -H 'Connection: X-Smoke-Hop' \
+            -H 'X-Smoke-Hop: must-not-reach-upstream' \
+            "${proxy_base}/probe?request=one&key=business-value")"
+          response_two="$(curl --fail --silent --show-error -D "$headers_two" \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            "${proxy_base}/probe?request=two")"
+          marker_one="$(jq -er '.key_marker' <<<"$response_one")"
+          marker_two="$(jq -er '.key_marker' <<<"$response_two")"
+          if [[ "$marker_one" == "$marker_two" ]]; then
+            echo "::error::Two independent proxy requests did not rotate upstream keys"
+            exit 1
+          fi
+          if [[ "$(jq -er '.path' <<<"$response_one")" != '/probe?request=one&key=business-value' ]]; then
+            echo "::error::Generic HTTP proxy did not preserve path and query"
+            exit 1
+          fi
+          if [[ "$(jq -r '.hop_header' <<<"$response_one")" != '' || \
+                "$(jq -r '.user_agent' <<<"$response_one")" != '' || \
+                "$(jq -r '.accept_encoding' <<<"$response_one")" != '' ]]; then
+            echo "::error::Generic HTTP proxy forwarded a hop header or synthesized transport headers"
+            exit 1
+          fi
+          if [[ "$(grep -ic '^x-smoke-multi:' "$headers_one")" -ne 2 ]]; then
+            echo "::error::Generic HTTP proxy did not preserve multi-value response headers"
+            exit 1
+          fi
+          if ! grep -Fq '[REDACTED]' "$headers_one"; then
+            echo "::error::Successful upstream response header was not credential-sanitized"
+            exit 1
+          fi
+
+          failover_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            "${proxy_base}/failover?fail_marker=${marker_one}")"
+          failover_marker="$(jq -er '.key_marker' <<<"$failover_response")"
+          if [[ "$failover_marker" != "$marker_two" ]]; then
+            echo "::error::Retryable Generic HTTP failure did not switch to the other key"
+            exit 1
+          fi
+
+          integration_collision="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            "${proxy_base}/api/integration/info")"
+          if [[ "$(jq -er '.path' <<<"$integration_collision")" != '/api/integration/info' ]]; then
+            echo "::error::Generic HTTP path collided with a legacy local integration route"
+            exit 1
+          fi
+
+          opaque_headers="${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-opaque.headers"
+          opaque_response="$(curl --fail --silent --show-error -D "$opaque_headers" \
+            -X POST \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary 'opaque-request-body' \
+            "${proxy_base}/opaque")"
+          if [[ "$(jq -er '.method' <<<"$opaque_response")" != 'POST' || \
+                "$(jq -er '.body' <<<"$opaque_response")" != 'opaque-request-body' ]]; then
+            echo "::error::Generic HTTP proxy did not preserve method and opaque body"
+            exit 1
+          fi
+
+          for forbidden in "$upstream_key_a" "$upstream_key_b" "$generic_proxy_key"; do
+            if grep -Fq "$forbidden" \
+              "$headers_one" "$headers_two" "$opaque_headers" - \
+              <<<"${response_one}${response_two}${failover_response}${opaque_response}"; then
+              echo "::error::Proxy response leaked a credential-shaped smoke fixture"
+              exit 1
+            fi
+          done
+
+          docker restart --time 20 "$upgraded_container" >/dev/null
+          wait_for_health "$upgrade_port"
+          assert_login "$upgrade_port"
+          restart_response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${generic_proxy_key}" \
+            "${proxy_base}/after-restart")"
+          if [[ "$(jq -er '.key_marker' <<<"$restart_response")" != 'alpha' && \
+                "$(jq -er '.key_marker' <<<"$restart_response")" != 'beta' ]]; then
+            echo "::error::Generic HTTP group or keys did not recover after image restart"
+            exit 1
+          fi
+
+          logs_payload="$(jq -n \
+            --arg group_name "$generic_group_name" \
+            '{page: 1, page_size: 100, group_name: $group_name}')"
+          logs_response=""
+          for _ in {1..30}; do
+            logs_response="$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${AUTH_KEY}" \
+              -H 'Content-Type: application/json' \
+              --data "$logs_payload" \
+              "http://127.0.0.1:${upgrade_port}/api/logs/search")"
+            if [[ "$(jq -r '.data.pagination.total_items // 0' <<<"$logs_response")" -ge 6 ]]; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$(jq -r '.data.pagination.total_items // 0' <<<"$logs_response")" -lt 6 ]]; then
+            echo "::error::Request logs were not durably flushed across restart"
+            exit 1
+          fi
+          if ! jq -e '.data.items | all(.[]; (.key_value | test("^fp:[0-9a-f]{12}$")))' \
+            <<<"$logs_response" >/dev/null; then
+            echo "::error::Request-log API exposed a value other than a short fingerprint"
+            exit 1
+          fi
+          if jq -e '.. | objects | select(has("key_hash"))' <<<"$logs_response" >/dev/null; then
+            echo "::error::Request-log API serialized an internal key_hash"
+            exit 1
+          fi
+
+          app_logs="${RUNNER_TEMP}/gpt-load-smoke-${run_suffix}-app.log"
+          docker logs "$upgraded_container" >"$app_logs" 2>&1
+          for forbidden in \
+            "$upstream_key_a" \
+            "$upstream_key_b" \
+            "$generic_proxy_key" \
+            "$LEGACY_LOG_KEY" \
+            "$AUTH_KEY"; do
+            if grep -Fq "$forbidden" "$app_logs" || grep -Fq "$forbidden" <<<"$logs_response"; then
+              echo "::error::Application logs or request-log API leaked a credential-shaped fixture"
+              exit 1
+            fi
+          done
 
       - name: Ensure smoke resources are removed
         if: always()
@@ -272,16 +654,59 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote tested digest
+      - name: Promote tested digest to exact release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+
+          if [[ ! "$IMAGE_REF" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Build job did not expose an immutable image digest"
+            exit 1
+          fi
+
+          # Recheck immediately before the first immutable release write. The
+          # build job publishes only a staging tag, so a release published
+          # while smoke tests run cannot have its exact image replaced.
+          if existing_draft="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            --jq '.draft' 2>release-query-error.log)"; then
+            if [[ "$existing_draft" != "true" ]]; then
+              echo "::error::Release ${RELEASE_TAG} is already published; refusing to replace its exact image"
+              exit 1
+            fi
+            echo "Release ${RELEASE_TAG} is still a draft and its exact image may be refreshed"
+          elif grep -q 'HTTP 404' release-query-error.log; then
+            echo "No existing release for ${RELEASE_TAG}; its exact image may be created"
+          else
+            cat release-query-error.log >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            --tag "${TARGET_IMAGE}:${RELEASE_TAG}" \
+            "$IMAGE_REF"
+          expected_digest="${IMAGE_REF##*@}"
+          exact_manifest="$(docker buildx imagetools inspect \
+            "${TARGET_IMAGE}:${RELEASE_TAG}" \
+            --format '{{json .Manifest}}')"
+          if [[ ! "$exact_manifest" =~ \"digest\"[[:space:]]*:[[:space:]]*\"${expected_digest}\" ]]; then
+            echo "::error::Exact ${RELEASE_TAG} digest does not match the tested image"
+            exit 1
+          fi
+          docker buildx imagetools inspect "${TARGET_IMAGE}:${RELEASE_TAG}"
+
+      - name: Promote verified release channel
         shell: bash
         run: |
           set -Eeuo pipefail

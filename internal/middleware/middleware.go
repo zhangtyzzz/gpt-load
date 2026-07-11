@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"gpt-load/internal/channel"
 	app_errors "gpt-load/internal/errors"
+	"gpt-load/internal/models"
 	"gpt-load/internal/response"
-	"gpt-load/internal/services"
 	"gpt-load/internal/types"
 	"gpt-load/internal/utils"
 
@@ -126,7 +127,7 @@ func Auth(authConfig types.AuthConfig) gin.HandlerFunc {
 			return
 		}
 
-		key := extractAuthKey(c)
+		key := extractAuthKey(c, true)
 
 		isValid := key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(authConfig.Key)) == 1
 
@@ -141,11 +142,29 @@ func Auth(authConfig types.AuthConfig) gin.HandlerFunc {
 }
 
 // ProxyAuth
-func ProxyAuth(gm *services.GroupManager) gin.HandlerFunc {
+type proxyGroupLookup interface {
+	GetGroupByName(string) (*models.Group, error)
+}
+
+const (
+	// ProxyKeyHeader is the dedicated control-plane credential carrier for
+	// proxy requests. It avoids collisions with end-to-end upstream auth.
+	ProxyKeyHeader = "X-Gpt-Load-Key"
+
+	proxyAuthHeadersContextField = "proxy_auth_consumed_headers"
+)
+
+type proxyCredentialCandidate struct {
+	header string
+	value  string
+}
+
+func ProxyAuth(gm proxyGroupLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check key
-		key := extractAuthKey(c)
-		if key == "" {
+		// Reject requests with no possible proxy credential before touching the
+		// group store. A query key remains only a legacy candidate; whether it
+		// may be consumed is decided after the group type is known.
+		if len(proxyHeaderCredentialCandidates(c)) == 0 && c.Query("key") == "" {
 			response.Error(c, app_errors.ErrUnauthorized)
 			c.Abort()
 			return
@@ -153,16 +172,45 @@ func ProxyAuth(gm *services.GroupManager) gin.HandlerFunc {
 
 		group, err := gm.GetGroupByName(c.Param("group_name"))
 		if err != nil {
-			response.Error(c, app_errors.NewAPIError(app_errors.ErrInternalServer, "Failed to retrieve proxy group"))
+			// The caller is not authenticated until a group-specific proxy key is
+			// verified. Keep lookup failures indistinguishable from an invalid key
+			// so group names cannot be enumerated through 500/401 differences.
+			response.Error(c, app_errors.ErrUnauthorized)
 			c.Abort()
 			return
 		}
 
-		// Check both key collections to prevent timing attacks
-		_, existsInEffective := group.EffectiveConfig.ProxyKeysMap[key]
-		_, existsInGroup := group.ProxyKeysMap[key]
+		// Generic HTTP is a transparent data plane. Its query string belongs to
+		// the upstream application and must never be consumed or re-encoded as
+		// console authentication. Legacy channels retain query-key support.
+		valid := false
+		consumedHeaders := make([]string, 0, 2)
+		consumedSet := make(map[string]struct{}, 2)
+		for _, candidate := range proxyHeaderCredentialCandidates(c) {
+			if !isValidGroupProxyKey(group, candidate.value) {
+				continue
+			}
+			valid = true
+			canonical := candidate.header
+			if _, exists := consumedSet[canonical]; !exists {
+				consumedSet[canonical] = struct{}{}
+				consumedHeaders = append(consumedHeaders, canonical)
+			}
+		}
 
-		if existsInEffective || existsInGroup {
+		// Query authentication remains a legacy-only compatibility surface.
+		// Remove it only when it actually authenticates this request.
+		if group.ChannelType != channel.GenericHTTPChannelType {
+			if queryKey := c.Query("key"); queryKey != "" && isValidGroupProxyKey(group, queryKey) {
+				valid = true
+				query := c.Request.URL.Query()
+				query.Del("key")
+				c.Request.URL.RawQuery = query.Encode()
+			}
+		}
+
+		if valid {
+			c.Set(proxyAuthHeadersContextField, consumedHeaders)
 			c.Next()
 			return
 		}
@@ -172,10 +220,67 @@ func ProxyAuth(gm *services.GroupManager) gin.HandlerFunc {
 	}
 }
 
+// ConsumedProxyCredentialHeaders returns only header names whose values
+// authenticated the current proxy request. Values are intentionally never
+// retained in context.
+func ConsumedProxyCredentialHeaders(c *gin.Context) []string {
+	if c == nil {
+		return nil
+	}
+	value, exists := c.Get(proxyAuthHeadersContextField)
+	if !exists {
+		return nil
+	}
+	headers, ok := value.([]string)
+	if !ok {
+		return nil
+	}
+	return append([]string(nil), headers...)
+}
+
+func isValidGroupProxyKey(group *models.Group, key string) bool {
+	if group == nil || key == "" {
+		return false
+	}
+	_, existsInEffective := group.EffectiveConfig.ProxyKeysMap[key]
+	_, existsInGroup := group.ProxyKeysMap[key]
+	return existsInEffective || existsInGroup
+}
+
+func proxyHeaderCredentialCandidates(c *gin.Context) []proxyCredentialCandidate {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	candidates := make([]proxyCredentialCandidate, 0, 4)
+	for _, value := range c.Request.Header.Values("Authorization") {
+		const bearerPrefix = "Bearer "
+		if strings.HasPrefix(value, bearerPrefix) && len(value) > len(bearerPrefix) {
+			candidates = append(candidates, proxyCredentialCandidate{header: "Authorization", value: value[len(bearerPrefix):]})
+		}
+	}
+	for _, name := range []string{ProxyKeyHeader, "X-Api-Key", "X-Goog-Api-Key"} {
+		for _, value := range c.Request.Header.Values(name) {
+			if value != "" {
+				candidates = append(candidates, proxyCredentialCandidate{header: name, value: value})
+			}
+		}
+	}
+	return candidates
+}
+
 // ProxyRouteDispatcher dispatches special routes before proxy authentication
-func ProxyRouteDispatcher(serverHandler interface{ GetIntegrationInfo(*gin.Context) }) gin.HandlerFunc {
+func ProxyRouteDispatcher(serverHandler interface{ GetIntegrationInfo(*gin.Context) }, gm proxyGroupLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Param("path") == "/api/integration/info" {
+		if c.Param("path") != "/api/integration/info" {
+			c.Next()
+			return
+		}
+
+		// This endpoint predates generic HTTP and is part of the legacy LLM
+		// integration surface. A generic upstream may legitimately expose the
+		// same path, so it must continue through normal proxy authentication.
+		group, err := gm.GetGroupByName(c.Param("group_name"))
+		if err == nil && group.ChannelType != channel.GenericHTTPChannelType {
 			serverHandler.GetIntegrationInfo(c)
 			c.Abort()
 			return
@@ -245,15 +350,22 @@ func isMonitoringEndpoint(path string) bool {
 }
 
 // extractAuthKey extracts a auth key.
-func extractAuthKey(c *gin.Context) string {
-	// Query key
-	if key := c.Query("key"); key != "" {
-		query := c.Request.URL.Query()
-		query.Del("key")
-		c.Request.URL.RawQuery = query.Encode()
-		return key
+func extractAuthKey(c *gin.Context, allowQuery bool) string {
+	// Query authentication is a legacy compatibility surface. Generic HTTP
+	// callers need `key` to remain ordinary application data.
+	if allowQuery {
+		if key := c.Query("key"); key != "" {
+			query := c.Request.URL.Query()
+			query.Del("key")
+			c.Request.URL.RawQuery = query.Encode()
+			return key
+		}
 	}
 
+	return extractHeaderAuthKey(c)
+}
+
+func extractHeaderAuthKey(c *gin.Context) string {
 	// Bearer token
 	authHeader := c.GetHeader("Authorization")
 	if authHeader != "" {

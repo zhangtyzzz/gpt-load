@@ -1,3 +1,5 @@
+import type { ChannelConfig, ChannelTypeId } from "@/types/channels";
+
 // 通用 API 响应结构
 export interface ApiResponse<T> {
   code: number;
@@ -11,8 +13,8 @@ export type KeyStatus = "active" | "invalid" | undefined;
 // 分组类型
 export type GroupType = "standard" | "aggregate";
 
-// 渠道类型
-export type ChannelType = "openai" | "openai-response" | "gemini" | "anthropic";
+// 渠道类型由后端注册表驱动；这里保持开放，避免新增渠道要求重新发布前端。
+export type ChannelType = ChannelTypeId;
 
 // 数据模型定义
 export interface APIKey {
@@ -90,6 +92,7 @@ export interface Group {
   sort: number;
   test_model: string;
   channel_type: ChannelType;
+  channel_config?: ChannelConfig;
   upstreams: UpstreamInfo[];
   validation_endpoint: string;
   config: Record<string, unknown>;
