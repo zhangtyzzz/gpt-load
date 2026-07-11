@@ -87,6 +87,10 @@ It does not mean applying glass effects to every surface.
   comfortable touch target.
 - Validate at minimum at 1440x900, 1024x768, and 390x844 in both light and dark
   appearance.
+- For scrollable navigation, tables, and cards, test a populated dataset that
+  exceeds the viewport. Scroll every nested container to its end and confirm
+  the final item, trailing actions, card boundary, footer, and safe-area inset
+  remain reachable without overlap or clipping.
 
 ### Vue and Naive UI implementation
 
@@ -188,8 +192,10 @@ npm run build
 
 For UI changes, run the application with isolated temporary data and verify the
 critical flows in a real browser at the viewport sizes listed above. Check
-empty, populated, loading, error, and dirty-form states. Do not use production
-credentials or mutate the maintainer's existing data during verification.
+empty, populated, long-list, loading, error, and dirty-form states. A long-list
+check must include scrolling to the final item and verifying trailing actions
+against the footer and safe-area inset. Do not use production credentials or
+mutate the maintainer's existing data during verification.
 
 Security-sensitive release branches also run `govulncheck`, `gosec`, and
 `npm audit`, with findings triaged for reachability rather than copied blindly.
