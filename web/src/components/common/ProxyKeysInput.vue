@@ -3,7 +3,7 @@ import { copy } from "@/utils/clipboard";
 import { generateSecureRandomString } from "@/utils/secure-random";
 import { Copy, EyeOffOutline, EyeOutline, Key } from "@vicons/ionicons5";
 import { NButton, NIcon, NInput, NInputNumber, NModal, NSpace, useMessage } from "naive-ui";
-import { ref } from "vue";
+import { ref, type InputHTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
 
 interface Props {
@@ -31,6 +31,12 @@ const showKeyGeneratorModal = ref(false);
 const keyCount = ref(1);
 const isGenerating = ref(false);
 const showProxyKeys = ref(false);
+const nativeInputProps: InputHTMLAttributes = {
+  autocomplete: "new-password",
+  name: "gpt-load-proxy-keys",
+  autocapitalize: "none",
+  spellcheck: false,
+};
 
 // 生成密钥
 function generateKeys(): string[] {
@@ -117,6 +123,7 @@ function handleInput(value: string) {
     <n-input
       :value="modelValue"
       :type="showProxyKeys ? 'text' : 'password'"
+      :input-props="nativeInputProps"
       :placeholder="placeholder || t('keys.multiKeysPlaceholder')"
       clearable
       :size="size"
