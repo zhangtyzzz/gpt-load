@@ -3,13 +3,19 @@
 The roadmap is ordered by agent execution waves and quality gates, not human
 calendar estimates. A wave is complete only when its exit criteria are met.
 
-## Wave 0 — Independent distribution and trust baseline
+## Wave 0 — Independent project and trust baseline
 
-Status: implemented and verified; introduced for public validation in
-`v1.6.0-beta.1`.
+Status: the security and interface baseline was validated in `v1.6.0-beta.1`
+and `v1.6.0-beta.2`; standalone release automation is implemented on the
+current development line and awaits prerelease validation.
 
 - Point images, release checks, documentation, issues, and project links to
   `zhangtyzzz/gpt-load`.
+- Establish this repository as the sole implementation and release source of
+  truth, with no automatic synchronization from another repository.
+- Consolidate platform packaging behind one draft-release writer, align local,
+  CI, release, and container builds on Node 24 LTS, and keep GitHub Actions on
+  supported runtimes.
 - Remove credentials from system, access, request, API, and CSV logs.
 - Move legacy `request_logs.key_value` removal to bounded, cancellable
   background batches so large installations can upgrade without delaying
@@ -21,7 +27,11 @@ Status: implemented and verified; introduced for public validation in
 
 Exit criteria:
 
-- The recommended Compose path reports and runs this fork's version.
+- The recommended Compose path reports and runs this project's version.
+- GitHub repository metadata points only to this repository or documentation
+  maintained by this project.
+- One release tag produces one draft with all platform binaries and checksums;
+  a non-publishing dry run exercises the same packaging graph.
 - A credential-shaped test value cannot be found in emitted logs or log APIs.
 - Startup remains responsive while legacy request-log credentials are removed
   in bounded batches, and shutdown can interrupt the sweep safely.
@@ -30,6 +40,49 @@ Exit criteria:
 - Dashboard, Keys, Logs, Settings, and Login pass desktop/mobile light/dark
   browser review.
 - Backend and frontend verification gates pass.
+
+GitHub fork-network detachment is prepared but externally gated. It is complete
+only after repository metadata and release assets are backed up, the maintainer
+explicitly accepts GitHub's irreversible metadata-loss warning, GHCR continuity
+is verified, and post-detach release validation succeeds. Detachment is not a
+normal code-change or release step.
+
+## v1.6.0-beta.3 — Generic HTTP transparency and stateless Hosted MCP
+
+Status: implemented for `v1.6.0-beta.3`; prerelease image, upgrade, and
+compatibility validation remain release gates before stable promotion.
+
+- Make Generic HTTP the protocol-neutral proxy path: preserve method, path,
+  query, body, end-to-end headers, upstream status, multi-value headers, and
+  streaming response behavior by default.
+- Express credential injection, validation, response classification, and retry
+  eligibility as optional declarative policies. Provider and protocol presets
+  only populate those ordinary configuration fields.
+- Keep unknown or unconfigured application state pass-through: it cannot
+  penalize a key, alter route health, or trigger replay.
+- Keep Hosted MCP on the same transparent HTTP path, with no MCP method, tool,
+  payload, or session-state branches. The prerelease supports stateless
+  Streamable HTTP; a concrete stateful service is required before expanding
+  that boundary.
+- When a Generic aggregate child has no selectable key or a safe retry exhausts
+  its attempted keys, continue to a healthy sibling without replaying unsafe
+  methods or reusing a key already attempted by the request.
+
+Exit criteria:
+
+- Integration tests cover arbitrary methods, nested paths, repeated query and
+  response headers, binary and JSON bodies, non-2xx pass-through, chunked/SSE
+  streaming, cancellation, and upstream truncation without protocol branches.
+- Retry and accounting tests prove that unknown, missing, malformed, and
+  unconfigured application state neither penalizes a key nor replays a request.
+- Aggregate tests cover a preferred child in cooldown, a retryable failure in a
+  high-weight child, attempted-key exclusion, healthy sibling fallback, and the
+  no-replay boundary for unsafe methods.
+- Preset equivalence tests prove that applying a preset produces the same
+  persisted configuration and runtime behavior as entering those fields by
+  hand; choosing Custom restores the generic pass-through path.
+- A code-path audit finds no vendor, MCP method, tool-name, or JSON-RPC branch in
+  the proxy core, and the backend/frontend verification gates pass.
 
 ## Wave 1 — Proxy reliability foundation
 
@@ -45,7 +98,19 @@ Exit criteria:
   changes.
 - Reconcile unreachable stale key hashes and mark interrupted global tasks as
   aborted or resumable instead of leaving them running until TTL.
-- Add a measured frontend bundle budget and split the remaining roughly 219 KB
+- Cache normalized Generic HTTP configuration in immutable group snapshots and
+  maintain an ID index so aggregate routing does not reparse every child or
+  linearly scan the full group list on each request.
+- Preserve valid, invalid, and inconclusive key-validation outcomes through
+  manual-task reporting and cron scheduling; a wholly inconclusive run must not
+  be reported as invalid or advance the successful-validation timestamp.
+- Re-evaluate session affinity only when a real stateful HTTP/MCP service shows
+  that transparent forwarding plus its own session token is insufficient. Start
+  with response-learned reuse of the existing key-affinity mapping, restricted
+  to a standard group with one upstream. Add complete child/upstream/key route
+  persistence only if a concrete aggregate or multi-upstream failure proves it
+  necessary, with an end-to-end reproduction and lifecycle design first.
+- Add a measured frontend bundle budget and split the remaining roughly 231 KB
   gzip application shell when cold-start telemetry shows the best boundary.
 - Migrate the end-of-support `vue-i18n` 9 line to 11 and refresh deprecated
   development-tool transitive dependencies behind compatibility tests.

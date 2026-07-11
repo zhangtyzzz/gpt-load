@@ -8,7 +8,7 @@ English | [中文](README_CN.md) | [日本語](README_JP.md)
 
 A high-performance, enterprise-grade AI API transparent proxy service designed specifically for enterprises and developers who need to integrate multiple AI services. Built with Go, featuring intelligent key management, load balancing, and comprehensive monitoring capabilities, designed for high-concurrency production environments.
 
-This independent distribution is maintained at
+This standalone project is maintained at
 [`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load). Project documentation,
 release notes, and support channels are published in this repository.
 
@@ -25,6 +25,7 @@ release notes, and support channels are published in this repository.
 - **High-Performance Design**: Zero-copy streaming, connection pool reuse, and atomic operations
 - **Production Ready**: Graceful shutdown, error recovery, and comprehensive security mechanisms
 - **Dual Authentication**: Separate authentication for management and proxy, with proxy authentication supporting global and group-level keys
+- **Generic HTTP and Hosted MCP (`v1.6.0-beta.3`)**: Tavily, Exa, and Jina presets with transparent HTTP and multi-key rotation; Hosted MCP currently targets stateless Streamable HTTP
 
 ## Supported AI Services
 
@@ -33,12 +34,22 @@ GPT-Load serves as a transparent proxy service, completely preserving the native
 - **OpenAI Format**: Official OpenAI API, Azure OpenAI, and other OpenAI-compatible services
 - **Google Gemini Format**: Native APIs for Gemini Pro, Gemini Pro Vision, and other models
 - **Anthropic Claude Format**: Claude series models, supporting high-quality conversations and text generation
+- **Generic HTTP / Hosted MCP**: Tavily, Exa, Jina, and custom HTTP services with configurable authentication and validation
+
+> [!TIP]
+> To rotate multiple Tavily, Exa, or Jina keys, or relay Tavily/Exa Hosted MCP
+> through GPT-Load, see the [Generic HTTP and Hosted MCP guide (Chinese)](GENERIC_HTTP_CN.md).
+> This feature ships in `v1.6.0-beta.3`; test deployments should pin
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3` rather than the moving `beta`
+> tag. The guide covers client configuration, the stateless Hosted MCP boundary,
+> aggregate groups, stdio limitations, failover, and sensitive-header protection.
 
 ## Quick Start
 
 ### System Requirements
 
 - Go 1.25+ (for source builds)
+- Node.js 24.18.0 (for frontend and source builds)
 - Docker (for containerized deployment)
 - MySQL, PostgreSQL, or SQLite (for database storage)
 - Redis (for caching and distributed coordination, optional)
@@ -96,8 +107,8 @@ docker compose pull && docker compose down && docker compose up -d
 ```
 
 > [!IMPORTANT]
-> **v1.6.0-beta.1 upgrade note:** Back up the database and pin the exact
-> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.1` image rather than the moving
+> **v1.6.0-beta.3 upgrade note:** Back up the database and pin the exact
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3` image rather than the moving
 > `beta` tag. On first startup, legacy reversible values in
 > `request_logs.key_value` are irreversibly removed in small background
 > batches. Clients that search request logs by a complete key must migrate from
@@ -113,6 +124,12 @@ docker compose pull && docker compose down && docker compose up -d
 > clients must not depend on that implementation field. Rolling back only the
 > image does not restore cleaned historical values; recovery also requires the
 > pre-upgrade database backup.
+> Existing OpenAI, Gemini, Anthropic, and OpenAI Responses groups retain their
+> current behavior. Generic HTTP accepts upstream credentials through configured
+> headers only; query-string credential injection is intentionally unsupported.
+> Rolling back to `v1.6.0-beta.2` preserves Generic HTTP rows in the database,
+> but that version cannot serve those groups. Restore the database backup if a
+> full behavioral rollback is required.
 
 After deployment:
 

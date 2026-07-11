@@ -1,8 +1,8 @@
 # GPT-Load Maintainer Guide
 
-This repository is an independently maintained distribution of
-`zhangtyzzz/gpt-load`. These instructions apply to every future agent and
-contributor working in this repository.
+This repository is the standalone `zhangtyzzz/gpt-load` project. These
+instructions apply to every future agent and contributor working in this
+repository.
 
 ## Source of truth
 
@@ -18,14 +18,41 @@ contributor working in this repository.
 - Official repository: `https://github.com/zhangtyzzz/gpt-load`.
 - Official container image: `ghcr.io/zhangtyzzz/gpt-load`.
 - Release checks, issue links, contribution links, badges, examples, and default
-  deployment files must point to this fork.
+  deployment files must point to this project.
+- Repository metadata, including its description and homepage, must point to
+  this repository or documentation maintained here. Do not present an external
+  project's website as this project's official homepage.
 - Repository-owned GitHub Actions targets must derive their package namespace
   from `${{ github.repository }}`. Do not hard-code the owner there: this repo
   publishes to `zhangtyzzz/gpt-load`, while downstream forks must publish to
   their own namespace.
-- Upstream material may be referenced only when explicitly labelled as upstream
-  attribution or migration context. It must never look like this project's
+- This project does not automatically synchronize another repository. Do not
+  add an upstream remote, scheduled sync workflow, or wholesale merge policy.
+  External changes are reviewed as third-party inputs and adapted through a
+  normal pull request with project-specific tests.
+- Historical source material may be referenced only when explicitly labelled
+  as attribution or migration context. It must never look like this project's
   official support or release channel.
+
+## Repository independence
+
+- Git history, runtime behavior, tests, and releases are independently managed
+  here even while GitHub may still display a historical fork-network relation.
+  That network relation does not make another repository a source of truth.
+- Leaving a GitHub fork network is permanent and may discard pull requests,
+  releases, comments, Actions history, rulesets, package linkage, and other
+  repository metadata. Never execute it as an incidental development step.
+- Before a fork-network detach, create a verified mirror backup; export pull
+  request, release, asset, Actions, ruleset, and repository-setting metadata;
+  verify GHCR digests and package access; and record any secret names that must
+  be recreated. Secret values cannot be recovered from GitHub after loss.
+- The maintainer must explicitly accept the documented metadata loss before the
+  final detach confirmation. Prefer GitHub's supported leave-network operation
+  over deleting and recreating the repository. Do not delete or recreate this
+  repository without separate, explicit authorization.
+- After detachment, verify that GitHub reports no parent/source repository,
+  restore required rulesets and settings, confirm `origin`, publish a test
+  prerelease, and prove that this repository can still push to its GHCR package.
 
 ## Product character
 
@@ -34,6 +61,9 @@ tool, so clarity and control come before decoration.
 
 - Show health, required attention, and the next useful action first.
 - Common tasks stay visible; advanced configuration is progressively disclosed.
+- In configuration forms, prefer a compact grouped/searchable selector for a
+  mutually exclusive preset set. Reserve persistent card grids for choices
+  whose differences must remain visible side by side to make the decision.
 - Every action has immediate feedback and an observable completion state.
 - Empty, loading, partial, error, and permission-denied states are designed
   states, not accidental blanks.
@@ -169,7 +199,57 @@ It does not mean applying glass effects to every surface.
 - Database updates are authoritative. Cache projection must be idempotent and
   recoverable after partial failure.
 
+## Generic HTTP proxy architecture
+
+- Generic HTTP is the default data-plane contract. Unless an explicit policy
+  says otherwise, preserve the incoming path, method, query, body, end-to-end
+  headers, upstream status, multi-value response headers, and streaming body.
+- Generic proxy credentials are accepted from authenticated headers only. Query
+  fields such as `key` belong to the upstream application and must remain byte
+  transparent; legacy query-key compatibility may not bleed into Generic HTTP.
+- Generic data paths may not be shadowed by console or compatibility endpoints.
+  Any legacy local route interception must be explicitly scoped away from the
+  Generic channel and covered by a collision test.
+- Remove standard and `Connection`-nominated hop-by-hop headers before any
+  request or response metadata is used for routing, affinity, forwarding, or
+  client output. A hop-by-hop value can never become an affinity identifier.
+- The Generic transport must not synthesize `Accept-Encoding`, silently decode
+  successful responses, or add a default `User-Agent` when the client omitted
+  one. Transport convenience must not rewrite the end-to-end representation.
+- Vendor names, tool names, protocol methods, JSON-RPC operations, and payload
+  shapes must not create branches in the proxy core. The core may understand
+  HTTP transport semantics, but it must not infer application-protocol state.
+- A customization is justified only when a transparent proxy cannot preserve
+  correctness and the failure mode is demonstrated with a regression test.
+  Implement justified behavior as a declarative, optional, reusable policy,
+  with pass-through behavior when the policy is absent.
+- Unknown, absent, malformed, or unconfigured application-level state must not
+  penalize a credential, change route health, or replay a request. Retries and
+  failure accounting require an explicit transport-safe or configured signal.
+- Provider or protocol presets may populate ordinary group and policy fields;
+  they must not unlock hidden runtime branches or introduce preset-only proxy
+  behavior.
+- Do not add application-session state merely because a protocol specification
+  makes it optional. A stateful routing feature requires a concrete provider or
+  deployment that fails without it, an end-to-end reproduction, and evidence
+  that the added persistence and failure modes are worth the maintenance cost.
+- Hosted MCP presets are transparent HTTP conveniences. Until a real stateful
+  service passes the requirement gate above, they must not enable hidden
+  session tracking or change ordinary per-request key rotation.
+
 ## Verification gates
+
+### Local test storage
+
+- Read `AGENTS.local.md` before running local verification when that file exists.
+  It is intentionally gitignored and may contain machine-specific storage or
+  tooling constraints that do not belong in this public repository.
+- Keep personal absolute paths, machine capacity details, and credential
+  locations out of tracked documentation. Give each local run a narrow external
+  task directory and remove its artifacts when verification finishes.
+- A user-provided credential file is not a disposable test artifact. Read it in
+  place with least-privilege permissions, never copy it into a test directory,
+  and never remove it unless the user explicitly asks.
 
 Backend changes should pass:
 
@@ -190,6 +270,12 @@ npm run type-check
 npm run build
 ```
 
+GitHub Actions changes should pass:
+
+```sh
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
+```
+
 For UI changes, run the application with isolated temporary data and verify the
 critical flows in a real browser at the viewport sizes listed above. Check
 empty, populated, long-list, loading, error, and dirty-form states. A long-list
@@ -200,8 +286,45 @@ mutate the maintainer's existing data during verification.
 Security-sensitive release branches also run `govulncheck`, `gosec`, and
 `npm audit`, with findings triaged for reachability rather than copied blindly.
 
+## Review triage
+
+Code review is a release-safety decision, not a competition to produce the
+largest possible issue list.
+
+- Block a change only for a branch-introduced reproducible regression, a
+  concrete credential/data-loss risk, broken release immutability, or an unmet
+  exit criterion explicitly promised by the current milestone.
+- Every blocking finding must state the user impact, exact code path, minimal
+  reproduction or evidence, and why it must be fixed in the current change.
+- Pre-existing debt, speculative edge cases without a reproduction, preference
+  disagreements, and low-impact cleanup belong in `ROADMAP.md` or a follow-up;
+  they do not turn an otherwise releasable change into a failed review.
+- The maintainer owns final severity and scope decisions. Reviewer labels are
+  inputs to that judgment, not automatic instructions to expand the change.
+
 ## Release discipline
 
+- Binary release packaging has one writer. Platform jobs may build in parallel
+  and exchange completed workflow artifacts, but only the final fan-in job may
+  create or update the GitHub draft release. Each artifact name has one writer;
+  overwrite is allowed only so an explicit workflow rerun can replace that
+  job's prior attempt. Do not add per-platform release writers or rely on
+  concurrent draft reconciliation.
+- Intermediate platform artifacts expire after one day; the verified fan-in
+  bundle is retained for seven days. The fan-in must prove the exact asset set,
+  generate `SHA256SUMS`, and verify that checksum file before any release write.
+- A tag rerun may refresh an existing draft for that exact tag. If the release
+  is already published, including as a prerelease, fail before rebuilding and
+  recheck immediately before the writer; never replace its notes, binary
+  assets, or exact container image.
+- Keep the frontend Node version aligned across `.nvmrc`, `package.json`, CI,
+  binary release jobs, and the Docker builder. Pin an exact supported Node LTS
+  patch for reproducible release builds, and update Node-runtime Actions to
+  their currently supported major versions in the same reviewed change.
+- The binary release workflow must support a non-publishing manual packaging
+  run. A dry run builds all supported platform artifacts but never creates a
+  tag or GitHub Release. Run it on the verified `main` commit before creating a
+  release tag whenever the packaging graph or toolchain changes.
 - Every release starts with a pull request. Push the agent branch, let all
   required CI checks pass, review the final diff and compatibility notes, and
   merge before creating a release tag. Wait for the resulting `main` commit's

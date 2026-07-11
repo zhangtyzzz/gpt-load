@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Prepare embedded frontend fixture
         run: |
@@ -30,10 +30,13 @@ jobs:
           touch web/dist/index.html
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25.12"
           cache: true
+
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
 
       - name: Vet
         run: go vet ./...
@@ -46,6 +49,9 @@ jobs:
 
       - name: Proxy affinity end-to-end test
         run: go test ./internal/proxy -run '^TestProxyAffinityEndToEnd$' -count=1
+
+      - name: Generic HTTP end-to-end tests
+        run: go test ./internal/proxy -run '^(TestGenericHTTPTransparentProxyAndLegacyAffinityEndToEnd|TestAggregateRetrySelectsCompleteUsableTuple)$' -count=1
 
       - name: Govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
@@ -62,12 +68,12 @@ jobs:
         working-directory: web
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20.x"
+          node-version: "24.18.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
 

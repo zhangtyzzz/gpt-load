@@ -8,9 +8,9 @@
 
 一个高性能、企业级的 AI 接口透明代理服务，专门为需要集成多种 AI 服务的企业和开发者设计。采用 Go 语言开发，具备智能密钥管理、负载均衡和完善的监控功能，专为高并发生产环境而设计。
 
-本独立发行版由
+本项目由
 [`zhangtyzzz/gpt-load`](https://github.com/zhangtyzzz/gpt-load) 持续维护。项目文档、
-版本说明和支持渠道均以该仓库为准。
+版本说明和支持渠道均以该仓库为准，并作为独立项目演进。
 
 ## 功能特性
 
@@ -25,6 +25,7 @@
 - **高性能设计**: 零拷贝流式传输、连接池复用、原子操作
 - **生产就绪**: 优雅关闭、错误恢复、完善的安全机制
 - **双重认证体系**: 管理端与代理端认证分离，代理认证支持全局和分组级别密钥
+- **通用 HTTP 与 Hosted MCP（`v1.6.0-beta.3`）**: 内置 Tavily、Exa、Jina 预设，支持透明 HTTP 与多 Key 轮询；Hosted MCP 当前面向 stateless Streamable HTTP
 
 ## 支持的 AI 服务
 
@@ -33,12 +34,22 @@ GPT-Load 作为透明代理服务，完整保留各 AI 服务商的原生 API �
 - **OpenAI 格式**: 官方 OpenAI API、Azure OpenAI、以及其他 OpenAI 兼容服务
 - **Google Gemini 格式**: Gemini Pro、Gemini Pro Vision 等模型的原生 API
 - **Anthropic Claude 格式**: Claude 系列模型，支持高质量的对话和文本生成
+- **通用 HTTP / Hosted MCP**: Tavily、Exa、Jina，以及可配置认证与校验规则的自定义 HTTP 服务
+
+> [!TIP]
+> 需要用多个 Tavily、Exa 或 Jina Key 轮询，或让 Tavily/Exa Hosted MCP 经过
+> GPT-Load？请参阅 [Generic HTTP 与 Hosted MCP 使用指南](GENERIC_HTTP_CN.md)。指南
+> 对应 `v1.6.0-beta.3`；测试部署请固定
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3`，不要依赖会移动的 `beta` 标签。
+> 内容覆盖客户端配置、stateless Hosted MCP 边界、聚合组、stdio 限制、失败切换
+> 边界和敏感 Header 保护。
 
 ## 快速开始
 
 ### 环境要求
 
 - Go 1.25+ (源码构建)
+- Node.js 24.18.0（前端及源码构建）
 - Docker (容器化部署)
 - MySQL, PostgreSQL, 或 SQLite (数据库存储)
 - Redis (缓存和分布式协调，可选)
@@ -96,8 +107,8 @@ docker compose pull && docker compose down && docker compose up -d
 ```
 
 > [!IMPORTANT]
-> **v1.6.0-beta.1 升级提示：**升级前请备份数据库，并固定使用精确镜像
-> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.1`，不要使用会移动的 `beta`
+> **v1.6.0-beta.3 升级提示：**升级前请备份数据库，并固定使用精确镜像
+> `ghcr.io/zhangtyzzz/gpt-load:v1.6.0-beta.3`，不要使用会移动的 `beta`
 > 标签。首次启动会在后台小批量、不可逆地清理历史
 > `request_logs.key_value` 可逆值。使用完整 Key 搜索请求日志的旧客户端需从
 > GET 查询参数迁移到 `POST /api/logs/search` 或 `POST /api/logs/export`；普通
@@ -109,6 +120,10 @@ docker compose pull && docker compose down && docker compose up -d
 > 有效及无效 Key 导出仍会提供完整 Key。Key API 不再序列化内部 `key_hash`，
 > 外部客户端不应依赖该内部字段。仅回滚旧镜像不会恢复已清理的历史值；
 > 如需恢复，必须同时恢复升级前的数据库备份。
+> 现有 OpenAI、Gemini、Anthropic 与 OpenAI Responses 分组行为不变。Generic
+> HTTP 只允许通过配置的 Header 注入上游凭据，明确不支持 Query 凭据注入。回退到
+> `v1.6.0-beta.2` 时 Generic HTTP 分组数据仍保留在数据库中，但旧版本无法代理这些
+> 分组；如需完整恢复旧行为，请使用升级前备份还原数据库。
 
 部署完成后：
 
