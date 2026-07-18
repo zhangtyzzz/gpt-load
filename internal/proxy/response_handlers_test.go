@@ -40,6 +40,10 @@ type cancelAfterTerminalWithErrorReader struct {
 	stage  int
 }
 
+type errorAfterTerminalReader struct {
+	stage int
+}
+
 func (r *cancelOnEOFReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if err == io.EOF {
@@ -77,6 +81,14 @@ func (r *cancelAfterTerminalWithErrorReader) Read(p []byte) (int, error) {
 	}
 	r.cancel()
 	return 0, context.Canceled
+}
+
+func (r *errorAfterTerminalReader) Read(p []byte) (int, error) {
+	if r.stage == 0 {
+		r.stage++
+		return copy(p, "data: [DONE]\n\n"), nil
+	}
+	return 0, io.ErrUnexpectedEOF
 }
 
 func (w *failingBodyWriter) Write(_ []byte) (int, error) {
@@ -204,6 +216,21 @@ func TestResponseHandlersReturnPreciseOutcomes(t *testing.T) {
 		requestCtx, cancel := context.WithCancel(context.Background())
 		ctx.Request = httptest.NewRequest(http.MethodGet, "/stream", nil).WithContext(requestCtx)
 		resp := &http.Response{Body: io.NopCloser(&cancelAfterTerminalWithErrorReader{cancel: cancel})}
+
+		result := server.handleStreamingResponse(ctx, resp)
+		if result.outcome != responseBodyCompleted || result.err != nil {
+			t.Fatalf("result=%#v body=%q", result, recorder.Body.String())
+		}
+		if recorder.Body.String() != "data: [DONE]\n\n" {
+			t.Fatalf("body=%q", recorder.Body.String())
+		}
+	})
+
+	t.Run("upstream truncation after SSE terminal write is completed", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/stream", nil)
+		resp := &http.Response{Body: io.NopCloser(&errorAfterTerminalReader{})}
 
 		result := server.handleStreamingResponse(ctx, resp)
 		if result.outcome != responseBodyCompleted || result.err != nil {

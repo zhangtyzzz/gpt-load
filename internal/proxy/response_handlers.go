@@ -79,7 +79,7 @@ func copyResponseBodyWithSSETerminal(c *gin.Context, body io.Reader, flusher htt
 			// evidence of downstream delivery. Only observe bytes after the writer
 			// accepted them while the request context was still live. Conversely,
 			// once the terminal event was already written, a later cancellation
-			// racing with trailing SSE whitespace must not turn the completed
+			// racing with post-terminal bytes must not turn the completed
 			// stream into a synthetic 499.
 			if terminal != nil && requestContextError(c) != nil {
 				if terminal.seen {
