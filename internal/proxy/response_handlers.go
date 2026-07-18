@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -23,6 +24,11 @@ type responseBodyResult struct {
 	err     error
 }
 
+type sseTerminalTracker struct {
+	tail []byte
+	seen bool
+}
+
 func (r responseBodyResult) completed() bool {
 	return r.outcome == responseBodyCompleted
 }
@@ -42,7 +48,7 @@ func (ps *ProxyServer) handleStreamingResponse(c *gin.Context, resp *http.Respon
 		return ps.handleNormalResponse(c, resp)
 	}
 
-	return copyResponseBody(c, resp.Body, flusher)
+	return copyEventStreamResponseBody(c, resp.Body, flusher)
 }
 
 // handleFlushedResponse preserves ordinary response metadata while forcing
@@ -57,10 +63,24 @@ func (ps *ProxyServer) handleFlushedResponse(c *gin.Context, resp *http.Response
 }
 
 func copyResponseBody(c *gin.Context, body io.Reader, flusher http.Flusher) responseBodyResult {
+	return copyResponseBodyWithSSETerminal(c, body, flusher, nil)
+}
+
+func copyEventStreamResponseBody(c *gin.Context, body io.Reader, flusher http.Flusher) responseBodyResult {
+	return copyResponseBodyWithSSETerminal(c, body, flusher, &sseTerminalTracker{})
+}
+
+func copyResponseBodyWithSSETerminal(c *gin.Context, body io.Reader, flusher http.Flusher, terminal *sseTerminalTracker) responseBodyResult {
 	buf := make([]byte, 4*1024)
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
+			// A terminal event read after the request was already cancelled is not
+			// evidence of downstream delivery. Only observe bytes after the writer
+			// accepted them while the request context was still live.
+			if terminal != nil && requestContextError(c) != nil {
+				return responseBodyResult{outcome: responseBodyClientCancelled, err: requestContextError(c)}
+			}
 			written, writeErr := c.Writer.Write(buf[:n])
 			if writeErr == nil && written != n {
 				writeErr = io.ErrShortWrite
@@ -71,9 +91,16 @@ func copyResponseBody(c *gin.Context, body io.Reader, flusher http.Flusher) resp
 			if flusher != nil {
 				flusher.Flush()
 			}
+			if terminal != nil {
+				terminal.observe(buf[:n])
+			}
 		}
 		if readErr == io.EOF {
-			if requestContextError(c) != nil {
+			// OpenAI-compatible clients commonly close immediately after receiving
+			// data: [DONE]. If that terminal event was accepted by the downstream
+			// writer, a context cancellation racing with the subsequent upstream EOF
+			// must not turn the completed SSE response into a synthetic 499.
+			if requestContextError(c) != nil && (terminal == nil || !terminal.seen) {
 				return responseBodyResult{outcome: responseBodyClientCancelled, err: requestContextError(c)}
 			}
 			return responseBodyResult{outcome: responseBodyCompleted}
@@ -82,6 +109,32 @@ func copyResponseBody(c *gin.Context, body io.Reader, flusher http.Flusher) resp
 			return classifyResponseReadError(c, readErr)
 		}
 	}
+}
+
+func (t *sseTerminalTracker) observe(p []byte) {
+	if t == nil || t.seen || len(p) == 0 {
+		return
+	}
+
+	combined := make([]byte, 0, len(t.tail)+len(p))
+	combined = append(combined, t.tail...)
+	combined = append(combined, p...)
+	for _, line := range bytes.Split(combined, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		if bytes.Equal(bytes.TrimSpace(line[len("data:"):]), []byte("[DONE]")) {
+			t.seen = true
+			return
+		}
+	}
+
+	const tailLimit = 64
+	if len(combined) > tailLimit {
+		combined = combined[len(combined)-tailLimit:]
+	}
+	t.tail = append(t.tail[:0], combined...)
 }
 
 func classifyResponseReadError(c *gin.Context, err error) responseBodyResult {
