@@ -20,6 +20,19 @@ type failingBodyWriter struct {
 	err error
 }
 
+type cancelOnEOFReader struct {
+	reader io.Reader
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnEOFReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err == io.EOF {
+		r.cancel()
+	}
+	return n, err
+}
+
 func (w *failingBodyWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
 }
@@ -80,6 +93,26 @@ func TestResponseHandlersReturnPreciseOutcomes(t *testing.T) {
 		result := server.handleNormalResponse(ctx, resp)
 		if result.outcome != responseBodyCompleted || result.err != nil || recorder.Body.String() != "complete" {
 			t.Fatalf("result=%#v body=%q", result, recorder.Body.String())
+		}
+	})
+
+	t.Run("upstream EOF wins over terminal client cancellation", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		requestCtx, cancel := context.WithCancel(context.Background())
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/stream", nil).WithContext(requestCtx)
+		body := &cancelOnEOFReader{
+			reader: strings.NewReader("data: [DONE]\n\n"),
+			cancel: cancel,
+		}
+		resp := &http.Response{Body: io.NopCloser(body)}
+
+		result := server.handleStreamingResponse(ctx, resp)
+		if result.outcome != responseBodyCompleted || result.err != nil {
+			t.Fatalf("result=%#v body=%q", result, recorder.Body.String())
+		}
+		if recorder.Body.String() != "data: [DONE]\n\n" {
+			t.Fatalf("body=%q", recorder.Body.String())
 		}
 	})
 

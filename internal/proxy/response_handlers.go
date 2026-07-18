@@ -73,9 +73,11 @@ func copyResponseBody(c *gin.Context, body io.Reader, flusher http.Flusher) resp
 			}
 		}
 		if readErr == io.EOF {
-			if requestContextError(c) != nil {
-				return responseBodyResult{outcome: responseBodyClientCancelled, err: requestContextError(c)}
-			}
+			// EOF means the upstream response body was fully consumed. A streaming
+			// client may close its request immediately after receiving the terminal
+			// event (for example OpenAI's data: [DONE]). That cancellation can race
+			// with this final read, but it must not turn a completed delivery into a
+			// synthetic 499.
 			return responseBodyResult{outcome: responseBodyCompleted}
 		}
 		if readErr != nil {
