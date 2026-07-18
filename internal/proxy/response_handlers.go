@@ -77,8 +77,14 @@ func copyResponseBodyWithSSETerminal(c *gin.Context, body io.Reader, flusher htt
 		if n > 0 {
 			// A terminal event read after the request was already cancelled is not
 			// evidence of downstream delivery. Only observe bytes after the writer
-			// accepted them while the request context was still live.
+			// accepted them while the request context was still live. Conversely,
+			// once the terminal event was already written, a later cancellation
+			// racing with post-terminal bytes must not turn the completed
+			// stream into a synthetic 499.
 			if terminal != nil && requestContextError(c) != nil {
+				if terminal.seen {
+					return responseBodyResult{outcome: responseBodyCompleted}
+				}
 				return responseBodyResult{outcome: responseBodyClientCancelled, err: requestContextError(c)}
 			}
 			written, writeErr := c.Writer.Write(buf[:n])
@@ -106,6 +112,13 @@ func copyResponseBodyWithSSETerminal(c *gin.Context, body io.Reader, flusher htt
 			return responseBodyResult{outcome: responseBodyCompleted}
 		}
 		if readErr != nil {
+			// Once data: [DONE] has been accepted by the downstream writer, the
+			// application-level SSE response is complete. Closing clients can
+			// propagate cancellation into the upstream transport before it reports
+			// EOF, so ignore that post-terminal read error for outcome accounting.
+			if terminal != nil && terminal.seen {
+				return responseBodyResult{outcome: responseBodyCompleted}
+			}
 			return classifyResponseReadError(c, readErr)
 		}
 	}
