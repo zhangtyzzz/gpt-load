@@ -19,6 +19,12 @@ import (
 // LogResponse is the public request-log representation. It intentionally does
 // not contain RequestLog.KeyHash: even a one-way hash is internal correlation
 // material and must never be serialized by the API.
+//
+// KeyValue carries the identifier shown in the list. It is the masked form of
+// the key when the row can still be resolved to a key in key management, and the
+// non-reversible fingerprint otherwise. KeyFingerprint always carries the
+// fingerprint, because a mask retains only eight characters and is not
+// guaranteed unique.
 type LogResponse struct {
 	ID              string    `json:"id"`
 	Timestamp       time.Time `json:"timestamp"`
@@ -27,6 +33,7 @@ type LogResponse struct {
 	ParentGroupID   uint      `json:"parent_group_id"`
 	ParentGroupName string    `json:"parent_group_name"`
 	KeyValue        string    `json:"key_value"`
+	KeyFingerprint  string    `json:"key_fingerprint"`
 	Model           string    `json:"model"`
 	IsSuccess       bool      `json:"is_success"`
 	SourceIP        string    `json:"source_ip"`
@@ -41,7 +48,16 @@ type LogResponse struct {
 	RequestBody     string    `json:"request_body"`
 }
 
-func newLogResponse(logEntry models.RequestLog) LogResponse {
+// newLogResponse builds the public representation. keyMasks maps key hashes to
+// masked keys for rows whose key still exists; a row absent from the map falls
+// back to its fingerprint.
+func newLogResponse(logEntry models.RequestLog, keyMasks map[string]string) LogResponse {
+	fingerprint := utils.KeyFingerprint(logEntry.KeyHash)
+	identifier := fingerprint
+	if mask, ok := keyMasks[logEntry.KeyHash]; ok {
+		identifier = mask
+	}
+
 	return LogResponse{
 		ID:              logEntry.ID,
 		Timestamp:       logEntry.Timestamp,
@@ -49,7 +65,8 @@ func newLogResponse(logEntry models.RequestLog) LogResponse {
 		GroupName:       logEntry.GroupName,
 		ParentGroupID:   logEntry.ParentGroupID,
 		ParentGroupName: logEntry.ParentGroupName,
-		KeyValue:        utils.KeyFingerprint(logEntry.KeyHash),
+		KeyValue:        identifier,
+		KeyFingerprint:  fingerprint,
 		Model:           logEntry.Model,
 		IsSuccess:       logEntry.IsSuccess,
 		SourceIP:        logEntry.SourceIP,
@@ -106,8 +123,14 @@ func (s *Server) respondWithLogs(c *gin.Context, filter services.LogFilter) {
 	}
 
 	items := make([]LogResponse, len(logs))
+	keyHashes := make([]string, 0, len(logs))
 	for i := range logs {
-		items[i] = newLogResponse(logs[i])
+		keyHashes = append(keyHashes, logs[i].KeyHash)
+	}
+	// One batched, indexed lookup for the whole page rather than one per row.
+	keyMasks := s.LogService.ResolveKeyMasks(keyHashes)
+	for i := range logs {
+		items[i] = newLogResponse(logs[i], keyMasks)
 	}
 
 	response.Success(c, &response.PaginatedResponse{

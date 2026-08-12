@@ -16,6 +16,12 @@ const (
 	// keyFingerprintLength keeps identifiers compact while retaining enough entropy
 	// to distinguish keys during operational troubleshooting.
 	keyFingerprintLength = 12
+	// KeyMaskMarker separates the retained head and tail of a masked key.
+	KeyMaskMarker = "****"
+	// keyMaskEdgeLength is how many leading and trailing characters a mask keeps.
+	keyMaskEdgeLength = 4
+	// keyMaskLength is the exact length of a well-formed mask: head + marker + tail.
+	keyMaskLength = keyMaskEdgeLength*2 + len(KeyMaskMarker)
 )
 
 var sensitiveNames = map[string]struct{}{
@@ -324,4 +330,39 @@ func ParseKeyFingerprint(value string) (string, bool) {
 		}
 	}
 	return prefix, true
+}
+
+// ParseKeyMask recognises a masked key identifier as produced by
+// MaskKeyIdentifier and returns the retained head and tail so a caller can find
+// the keys it could have come from.
+//
+// The shape check is deliberately exact — length keyMaskLength with the marker
+// at a fixed offset — so a complete upstream key can never be mistaken for a
+// mask and diverted away from exact-hash lookup. Matching is case-sensitive
+// because API keys are.
+func ParseKeyMask(value string) (head, tail string, ok bool) {
+	value = strings.TrimSpace(value)
+	if len(value) != keyMaskLength {
+		return "", "", false
+	}
+	if value[keyMaskEdgeLength:keyMaskEdgeLength+len(KeyMaskMarker)] != KeyMaskMarker {
+		return "", "", false
+	}
+
+	head = value[:keyMaskEdgeLength]
+	tail = value[keyMaskEdgeLength+len(KeyMaskMarker):]
+	// A head or tail containing the marker itself would make the split ambiguous
+	// and cannot come from MaskKeyIdentifier applied to a real key.
+	if strings.Contains(head, "*") || strings.Contains(tail, "*") {
+		return "", "", false
+	}
+	return head, tail, true
+}
+
+// KeyMatchesMask reports whether a plaintext key would render as the given mask.
+func KeyMatchesMask(key, head, tail string) bool {
+	if len(key) <= keyMaskEdgeLength*2 {
+		return false
+	}
+	return strings.HasPrefix(key, head) && strings.HasSuffix(key, tail)
 }

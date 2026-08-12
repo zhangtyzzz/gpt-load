@@ -696,8 +696,12 @@ export default {
     basicInfo: "Basic Info",
     key: "Key",
     keyIdentifier: "Key identifier",
-    keySearchPlaceholder: "Search by full key or key identifier",
+    keySearchPlaceholder: "Search by full key, mask, or key fingerprint",
     copyKeyIdentifier: "Copy key identifier",
+    keyFingerprint: "Key fingerprint",
+    copyKeyFingerprint: "Copy key fingerprint",
+    keyIdentifierUnresolved:
+      "This key is no longer in key management; showing its fingerprint only",
     group: "Group",
     requestId: "Request ID",
     requestTime: "Request Time",

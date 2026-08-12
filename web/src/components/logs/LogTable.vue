@@ -236,10 +236,24 @@ const saveColumnPreferences = () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleColumns.value));
 };
 
+// A row whose key can no longer be resolved to a key-management entry falls
+// back to the fingerprint, which the backend also returns in key_fingerprint.
+// Comparing the two is how the UI tells the two cases apart.
+const isUnresolvedKey = (row: LogRow) =>
+  !!row.key_value && !!row.key_fingerprint && row.key_value === row.key_fingerprint;
+
 const renderKeyIdentifier = (row: LogRow) => {
   const identifier = row.key_value;
+  const unresolved = isUnresolvedKey(row);
   const children = [
-    h(NEllipsis, { style: "max-width: 150px" }, { default: () => identifier || "-" }),
+    h(
+      NEllipsis,
+      {
+        style: "max-width: 150px",
+        title: unresolved ? t("logs.keyIdentifierUnresolved") : undefined,
+      },
+      { default: () => identifier || "-" }
+    ),
   ];
 
   if (identifier) {
@@ -902,6 +916,34 @@ const deselectAllColumns = () => {
                       :title="t('logs.copyKeyIdentifier')"
                       :aria-label="t('logs.copyKeyIdentifier')"
                       @click="copyContent(selectedLog.key_value, t('logs.keyIdentifier'))"
+                    >
+                      <template #icon>
+                        <n-icon :component="CopyOutline" />
+                      </template>
+                    </n-button>
+                  </div>
+                </div>
+              </div>
+              <!-- The mask keeps only eight characters and is not guaranteed
+                   unique, so the exact fingerprint stays available for an
+                   unambiguous search. Hidden when the identifier above already
+                   is the fingerprint. -->
+              <div
+                v-if="selectedLog.key_fingerprint && !isUnresolvedKey(selectedLog)"
+                class="detail-item-compact key-item"
+              >
+                <span class="detail-label-compact">{{ t("logs.keyFingerprint") }}:</span>
+                <div class="key-display-compact">
+                  <span class="key-value-compact">
+                    {{ selectedLog.key_fingerprint }}
+                  </span>
+                  <div class="key-actions-compact">
+                    <n-button
+                      size="tiny"
+                      text
+                      :title="t('logs.copyKeyFingerprint')"
+                      :aria-label="t('logs.copyKeyFingerprint')"
+                      @click="copyContent(selectedLog.key_fingerprint, t('logs.keyFingerprint'))"
                     >
                       <template #icon>
                         <n-icon :component="CopyOutline" />

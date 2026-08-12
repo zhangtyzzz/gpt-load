@@ -271,3 +271,284 @@ func TestLogFilterMatchesFullKeyOrFingerprint(t *testing.T) {
 		}
 	}
 }
+
+// newKeyIdentifierTestDB builds a database with both tables, which is what the
+// mask resolution path needs. newRequestLogTestDB deliberately omits api_keys so
+// the older tests continue to exercise the unresolvable fallback.
+func newKeyIdentifierTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	if err := database.AutoMigrate(&models.RequestLog{}, &models.GroupHourlyStat{}, &models.APIKey{}); err != nil {
+		t.Fatalf("migrate key identifier tables: %v", err)
+	}
+	return database
+}
+
+// seedKeyWithLogs stores a key the way KeyService does — encrypted value plus
+// one-way hash — and a matching request-log row.
+func seedKeyWithLogs(
+	t *testing.T,
+	database *gorm.DB,
+	enc encryption.Service,
+	plaintextKey string,
+	logID string,
+	statusCode int,
+) string {
+	t.Helper()
+
+	encrypted, err := enc.Encrypt(plaintextKey)
+	if err != nil {
+		t.Fatalf("encrypt key: %v", err)
+	}
+	keyHash := enc.Hash(plaintextKey)
+	if err := database.Create(&models.APIKey{
+		KeyValue: encrypted,
+		KeyHash:  keyHash,
+		GroupID:  1,
+		Status:   models.KeyStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("insert api key: %v", err)
+	}
+	if err := database.Create(&models.RequestLog{
+		ID:         logID,
+		KeyHash:    keyHash,
+		KeyValue:   utils.KeyFingerprint(keyHash),
+		GroupName:  "primary",
+		StatusCode: statusCode,
+		IsSuccess:  statusCode < 400,
+	}).Error; err != nil {
+		t.Fatalf("insert request log: %v", err)
+	}
+	return keyHash
+}
+
+func TestResolveKeyMasksMatchesKeyManagementMask(t *testing.T) {
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("unit-test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+
+	const keyAlpha = "sk-alpha-abcdefghijklmnop"
+	const keyBeta = "sk-beta-qrstuvwxyz012345"
+	alphaHash := seedKeyWithLogs(t, database, enc, keyAlpha, "log-alpha", 200)
+	betaHash := seedKeyWithLogs(t, database, enc, keyBeta, "log-beta", 400)
+
+	service := NewLogService(database, enc)
+	masks := service.ResolveKeyMasks([]string{alphaHash, betaHash})
+
+	// The expected value is what the key management screen renders: the mask of
+	// the decrypted key.
+	if got, want := masks[alphaHash], utils.MaskKeyIdentifier(keyAlpha); got != want {
+		t.Errorf("mask for alpha = %q, want %q", got, want)
+	}
+	if got, want := masks[betaHash], utils.MaskKeyIdentifier(keyBeta); got != want {
+		t.Errorf("mask for beta = %q, want %q", got, want)
+	}
+	if masks[alphaHash] == masks[betaHash] {
+		t.Errorf("distinct keys resolved to the same mask %q", masks[alphaHash])
+	}
+	for hash, mask := range masks {
+		if strings.Contains(mask, "alpha-abcdefghij") || strings.Contains(mask, "beta-qrstuvwxyz") {
+			t.Errorf("mask for %s leaked the middle of the key: %q", hash, mask)
+		}
+	}
+}
+
+func TestResolveKeyMasksOmitsUnresolvableHashes(t *testing.T) {
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+	liveHash := seedKeyWithLogs(t, database, enc, "sk-live-abcdefghijklmnop", "log-live", 200)
+
+	// A historical row whose key has been deleted from key management, and an
+	// empty hash from a row logged without a selected key.
+	const deletedKeyHash = "deadbeefdeadbeefdeadbeefdeadbeef"
+
+	service := NewLogService(database, enc)
+	masks := service.ResolveKeyMasks([]string{liveHash, deletedKeyHash, ""})
+
+	if _, ok := masks[liveHash]; !ok {
+		t.Errorf("live key was not resolved")
+	}
+	if _, ok := masks[deletedKeyHash]; ok {
+		t.Errorf("deleted key resolved to a mask %q; it must fall back to a fingerprint", masks[deletedKeyHash])
+	}
+	if _, ok := masks[""]; ok {
+		t.Errorf("empty key hash resolved to a mask")
+	}
+}
+
+func TestResolveKeyMasksFallsBackWhenAPIKeysUnavailable(t *testing.T) {
+	// newRequestLogTestDB has no api_keys table, standing in for a database where
+	// the table is unavailable. Log listing must degrade to fingerprints, not fail.
+	database := newRequestLogTestDB(t)
+	enc, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+	service := NewLogService(database, enc)
+
+	masks := service.ResolveKeyMasks([]string{enc.Hash("sk-any-key-value-here")})
+	if len(masks) != 0 {
+		t.Fatalf("expected no masks when api_keys is unavailable, got %v", masks)
+	}
+}
+
+func TestLogFilterMatchesMaskedIdentifier(t *testing.T) {
+	// The reporter's workflow: copy the identifier column, paste it into search.
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("unit-test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+
+	const keyAlpha = "sk-alpha-abcdefghijklmnop"
+	const keyBeta = "sk-beta-qrstuvwxyz012345"
+	alphaHash := seedKeyWithLogs(t, database, enc, keyAlpha, "log-alpha", 400)
+	seedKeyWithLogs(t, database, enc, keyBeta, "log-beta", 200)
+
+	service := NewLogService(database, enc)
+
+	var rows []models.RequestLog
+	if err := service.GetLogsQuery(LogFilter{KeyValue: utils.MaskKeyIdentifier(keyAlpha)}).
+		Find(&rows).Error; err != nil {
+		t.Fatalf("search by mask: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("mask search returned %d rows, want 1", len(rows))
+	}
+	if rows[0].KeyHash != alphaHash {
+		t.Fatalf("mask search matched the wrong key hash")
+	}
+
+	// The full key and the fingerprint must keep working alongside the mask.
+	for name, searchValue := range map[string]string{
+		"full key":    keyAlpha,
+		"fingerprint": utils.KeyFingerprint(alphaHash),
+	} {
+		var count int64
+		if err := service.GetLogsQuery(LogFilter{KeyValue: searchValue}).Count(&count).Error; err != nil {
+			t.Fatalf("count logs by %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("search by %s returned %d rows, want 1", name, count)
+		}
+	}
+}
+
+func TestLogFilterMaskWithNoMatchingKeyReturnsNothing(t *testing.T) {
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+	seedKeyWithLogs(t, database, enc, "sk-alpha-abcdefghijklmnop", "log-alpha", 200)
+
+	service := NewLogService(database, enc)
+	var count int64
+	if err := service.GetLogsQuery(LogFilter{KeyValue: "zzzz****zzzz"}).Count(&count).Error; err != nil {
+		t.Fatalf("count logs for unmatched mask: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("unmatched mask returned %d rows, want 0", count)
+	}
+}
+
+func TestLogFilterMaskMatchesEveryCollidingKey(t *testing.T) {
+	// Masks keep only eight characters, so two keys can share one. Both must be
+	// returned rather than the search silently picking one of them.
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+	const keyOne = "sk-pAAAAAAAAAAAAAAA1234"
+	const keyTwo = "sk-pBBBBBBBBBBBBBBB1234"
+	if utils.MaskKeyIdentifier(keyOne) != utils.MaskKeyIdentifier(keyTwo) {
+		t.Fatalf("test fixture no longer produces colliding masks")
+	}
+	seedKeyWithLogs(t, database, enc, keyOne, "log-one", 400)
+	seedKeyWithLogs(t, database, enc, keyTwo, "log-two", 400)
+
+	service := NewLogService(database, enc)
+	var count int64
+	if err := service.GetLogsQuery(LogFilter{KeyValue: utils.MaskKeyIdentifier(keyOne)}).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count logs for colliding mask: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("colliding mask returned %d rows, want 2", count)
+	}
+}
+
+func TestStreamLogKeysToCSVExportsMaskAndFingerprint(t *testing.T) {
+	database := newKeyIdentifierTestDB(t)
+	enc, err := encryption.NewService("unit-test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+
+	const liveKey = "sk-live-abcdefghijklmnop"
+	liveHash := seedKeyWithLogs(t, database, enc, liveKey, "csv-live", 400)
+
+	// A historical row with no surviving key, which must export a fingerprint.
+	const orphanHash = "0123456789abcdef0123456789abcdef"
+	if err := database.Create(&models.RequestLog{
+		ID:         "csv-orphan",
+		KeyHash:    orphanHash,
+		GroupName:  "primary",
+		StatusCode: 500,
+	}).Error; err != nil {
+		t.Fatalf("insert orphan request log: %v", err)
+	}
+
+	service := NewLogService(database, enc)
+	var output bytes.Buffer
+	if err := service.StreamLogKeysToCSV(LogFilter{}, &output); err != nil {
+		t.Fatalf("StreamLogKeysToCSV: %v", err)
+	}
+	if strings.Contains(output.String(), liveKey) {
+		t.Fatalf("CSV leaked the complete key: %s", output.String())
+	}
+
+	records, err := csv.NewReader(strings.NewReader(output.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV: %v", err)
+	}
+	wantHeader := []string{"key_identifier", "key_fingerprint", "group_name", "status_code"}
+	if len(records) == 0 || len(records[0]) != len(wantHeader) {
+		t.Fatalf("unexpected CSV header %v, want %v", records[0], wantHeader)
+	}
+	for i, column := range wantHeader {
+		if records[0][i] != column {
+			t.Fatalf("CSV header[%d] = %q, want %q", i, records[0][i], column)
+		}
+	}
+
+	rowsByFingerprint := make(map[string][]string)
+	for _, record := range records[1:] {
+		rowsByFingerprint[record[1]] = record
+	}
+
+	liveRow, ok := rowsByFingerprint[utils.KeyFingerprint(liveHash)]
+	if !ok {
+		t.Fatalf("CSV omitted the live key row: %s", output.String())
+	}
+	if got, want := liveRow[0], utils.MaskKeyIdentifier(liveKey); got != want {
+		t.Errorf("CSV identifier for live key = %q, want %q", got, want)
+	}
+
+	orphanRow, ok := rowsByFingerprint[utils.KeyFingerprint(orphanHash)]
+	if !ok {
+		t.Fatalf("CSV omitted the historical row: %s", output.String())
+	}
+	if got, want := orphanRow[0], utils.KeyFingerprint(orphanHash); got != want {
+		t.Errorf("CSV identifier for historical row = %q, want fingerprint %q", got, want)
+	}
+}

@@ -137,6 +137,67 @@ func TestParseKeyFingerprint(t *testing.T) {
 	}
 }
 
+func TestParseKeyMaskAcceptsMaskedIdentifier(t *testing.T) {
+	head, tail, ok := ParseKeyMask(" sk-a****mnop ")
+	if !ok {
+		t.Fatalf("ParseKeyMask() rejected a well-formed mask")
+	}
+	if head != "sk-a" || tail != "mnop" {
+		t.Fatalf("ParseKeyMask() = %q, %q, want %q, %q", head, tail, "sk-a", "mnop")
+	}
+}
+
+func TestParseKeyMaskRejectsCompleteKeysAndOtherIdentifiers(t *testing.T) {
+	// A complete key must never be diverted into masked-key resolution: it has to
+	// reach the exact-hash lookup instead.
+	invalid := []string{
+		"",
+		"sk-a-complete-upstream-key-value",
+		"fp:abcdef012345",
+		MaskKeyIdentifier("short"), // the bare marker carries no head or tail
+		"sk-a***mnop",              // three stars
+		"sk-a*****mno",             // five stars
+		"sk-a****mno",              // too short overall
+		"sk-a****mnopq",            // too long overall
+		"sk**a****mnop",            // marker at the wrong offset
+	}
+	for _, value := range invalid {
+		if head, tail, ok := ParseKeyMask(value); ok {
+			t.Errorf("ParseKeyMask(%q) accepted invalid mask as %q/%q", value, head, tail)
+		}
+	}
+}
+
+func TestParseKeyMaskRoundTripsMaskKeyIdentifier(t *testing.T) {
+	const key = "sk-abcdefghijklmnop"
+	head, tail, ok := ParseKeyMask(MaskKeyIdentifier(key))
+	if !ok {
+		t.Fatalf("ParseKeyMask() rejected MaskKeyIdentifier(%q)", key)
+	}
+	if !KeyMatchesMask(key, head, tail) {
+		t.Fatalf("KeyMatchesMask() rejected the key its own mask was built from")
+	}
+}
+
+func TestKeyMatchesMaskDistinguishesKeys(t *testing.T) {
+	head, tail, ok := ParseKeyMask(MaskKeyIdentifier("sk-alpha-key-value-1111"))
+	if !ok {
+		t.Fatalf("ParseKeyMask() rejected a generated mask")
+	}
+
+	if !KeyMatchesMask("sk-alpha-key-value-1111", head, tail) {
+		t.Errorf("KeyMatchesMask() rejected the originating key")
+	}
+	// Shares the head but not the tail.
+	if KeyMatchesMask("sk-alpha-key-value-2222", head, tail) {
+		t.Errorf("KeyMatchesMask() matched a key with a different tail")
+	}
+	// A key short enough to have no real head/tail window must never match.
+	if KeyMatchesMask("sk-11111", head, tail) {
+		t.Errorf("KeyMatchesMask() matched a short key")
+	}
+}
+
 func TestIsSensitiveNameCoversCommonNormalizedCredentialNames(t *testing.T) {
 	for _, name := range []string{
 		"AUTH_KEY",
