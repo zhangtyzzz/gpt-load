@@ -334,9 +334,13 @@ asked for. No existing test asserts the `...` form (verified: no `display.test.t
 
 ### 3.3 What the log column shows, in priority order
 
+> **Revised in §7.1.** Case 1 below was originally the bare mask. Measurement showed that colliding
+> masks made two distinct keys render identically, so case 1 now carries a discriminator. The rest of
+> this section stands.
+
 ```
-1. mask of the live key        e.g. "sk-a****mnop"   (key_hash resolves to an api_keys row)
-2. fingerprint                 e.g. "fp:6f9ef8c7ce8d" (key_hash present, but no live key)
+1. identifier of the live key  e.g. "sk-a****mnop#b91b" (key_hash resolves to an api_keys row)
+2. fingerprint                 e.g. "fp:6f9ef8c7ce8d"   (key_hash present, but no live key)
 3. ""                          (no key_hash at all — row logged without a selected key)
 ```
 
@@ -346,7 +350,12 @@ more, so there is no Keys-management row to be "consistent" with. Showing a mask
 fabrication; showing the fingerprint preserves the one thing that is still true — rows sharing a
 fingerprint used the same key. The UI labels this case so it is not mistaken for a bug (§3.6).
 
-### 3.4 Masks are not unique — mitigation
+### 3.4 Masks are not unique
+
+> **Superseded by §7.1.** The mitigation described here was measured and found insufficient: it left
+> the list column ambiguous, which is the exact failure this change exists to remove. §7.1 records
+> the collision probabilities, the measured output, and the fix. Kept here to show what was
+> originally shipped and why it was not enough.
 
 A mask exposes 8 characters, and provider key prefixes are shared: every OpenAI project key starts
 `sk-p`, so in practice only the last 4 characters distinguish keys within a provider. Two keys in
@@ -362,6 +371,9 @@ than silently ship an ambiguous column, the change keeps the unique value availa
 - Search accepts the mask **and** the fingerprint **and** the complete key (§3.5). When a mask is
   ambiguous, the fingerprint gives an exact query.
 
+What this missed: the fingerprint being available *elsewhere* does not help an operator scanning a
+list of rows that all read `sk-p****9z7q`. The list value itself has to be unique.
+
 ### 3.5 Search: keeping the copy-and-paste path working
 
 The reporter's workflow is literally "copy the column, paste it into the box". After this change the
@@ -371,20 +383,27 @@ column contains a mask, and a mask reaches the `else` branch of §1.6, is hashed
 `logFiltersScope` becomes a three-way decision:
 
 ```
-input looks like "AAAA****ZZZZ"  -> resolve to api_keys with that prefix/suffix,
-                                    then key_hash IN (their hashes); no match -> match nothing
-input looks like "fp:<12 hex>"   -> key_hash LIKE prefix%          (unchanged)
-otherwise                        -> key_hash = Hash(input)         (unchanged, complete key)
+input looks like "AAAA****ZZZZ"        -> resolve to api_keys with that prefix/suffix,
+  or "AAAA****ZZZZ#hhhh"                  narrowed by the hash prefix when present, then
+                                          key_hash IN (their hashes); no match -> match nothing
+input looks like "fp:<12 hex>"         -> key_hash LIKE prefix%          (unchanged)
+otherwise                              -> key_hash = Hash(input)         (unchanged, complete key)
 ```
 
-Mask detection is deliberately strict — exactly 12 characters with `****` at offsets 4..8 — so it
-cannot swallow a complete key. A real key of exactly that shape would be pathological; the risk of
-mis-routing one is far smaller than the certainty of breaking copy-and-paste.
+Identifier detection is deliberately strict — exactly 12 mask characters with `****` at offsets
+4..8, plus an optional `#` and exactly 4 hex characters — so it cannot swallow a complete key. A real
+key of exactly that shape would be pathological; the risk of mis-routing one is far smaller than the
+certainty of breaking copy-and-paste.
 
-Mask resolution scans `api_keys` in batches of `chunkSize` (500, the existing constant at
+Resolution scans `api_keys` in batches of `chunkSize` (500, the existing constant at
 `internal/services/key_service.go:20`), decrypts each key, and keeps hashes whose plaintext matches
-the prefix and suffix. Matches are capped (1000 keys) so a degenerate mask cannot build an unbounded
-`IN` clause; the cap is logged when hit rather than silently truncating.
+the prefix and suffix. When a discriminator is present the scan is first narrowed by an indexed
+`key_hash LIKE` prefix, which is what the column now shows and which reduced measured decryptions
+from 400 to 1 (§7.2). Matches are capped (1000 keys) so a degenerate bare mask cannot build an
+unbounded `IN` clause; the cap is logged when hit rather than silently truncating.
+
+The bare mask stays accepted so an identifier copied from the previous build still resolves; it
+returns every key that masks that way rather than guessing one.
 
 The placeholder text is also updated in all three locales to say masks are accepted.
 
@@ -487,27 +506,41 @@ cover the resolvable case. No existing test was modified, skipped, or weakened f
 
 Backend:
 
-- `internal/utils/string_utils.go` — add `MaskKeyIdentifier` (never reveals short keys).
-- `internal/utils/redaction_utils.go` — add `ParseKeyMask` (strict `AAAA****ZZZZ` shape).
-- `internal/services/log_service.go` — add `ResolveKeyIdentifiers` (batched `key_hash` → mask) and
-  `resolveMaskedKeyHashes`; wire mask branch into `logFiltersScope`; export gains
+- `internal/utils/string_utils.go` — add `MaskKeyIdentifier` (never reveals short keys) and
+  `KeyIdentifier` (mask + hash discriminator; added in §7.1).
+- `internal/utils/redaction_utils.go` — add `ParseKeyIdentifier` (strict `AAAA****ZZZZ` shape with an
+  optional `#hhhh` discriminator) and `KeyMatchesMask`.
+- `internal/services/log_service.go` — add `ResolveKeyIdentifiers` (batched `key_hash` → identifier)
+  and `resolveMaskedKeyHashes`; wire the identifier branch into `logFiltersScope`; export gains
   `key_fingerprint`.
-- `internal/handler/log_handler.go` — `LogResponse.key_fingerprint`; resolve masks per page.
+- `internal/handler/log_handler.go` — `LogResponse.key_fingerprint`; resolve identifiers per page.
 
 Frontend:
 
-- `web/src/utils/display.ts` — `maskKey` uses `****` and masks short keys.
+- `web/src/utils/display.ts` — `maskKey` uses `****` and masks short keys; exports
+  `KEY_MASK_MARKER`.
 - `web/src/types/models.ts` — `RequestLog.key_fingerprint?`.
-- `web/src/components/logs/LogTable.vue` — render mask, show fingerprint in detail modal.
+- `web/src/components/logs/LogTable.vue` — render the identifier, show the fingerprint in the detail
+  modal, tooltip on unresolved rows.
 - `web/src/locales/{zh-CN,en-US,ja-JP}.ts` — reworded placeholder + `keyFingerprint`,
-  `copyKeyFingerprint`.
+  `copyKeyFingerprint`, `keyIdentifierUnresolved`.
 
 Tests and verification:
 
 - `internal/utils/string_utils_test.go`, `internal/utils/redaction_utils_test.go`
 - `internal/services/log_service_test.go`, `internal/handler/log_handler_test.go`
 - `web/src/utils/display.test.ts`
-- `internal/services/keyidentifier_verification_test.go` — runnable side-by-side proof (§6).
+- `internal/services/keyidentifier_verification_test.go` — runnable side-by-side proof (§6)
+
+Added by the audit pass (§7):
+
+- `internal/handler/log_identifier_cost_test.go` — SQL-statement and decryption counters; per-page
+  and per-search-input cost measurement (§7.2)
+- `internal/services/keyidentifier_audit_test.go` — mask collision, key lifecycle including a real
+  `ENCRYPTION_KEY` rotation, and the removed-key misconfiguration probe (§7.1, §7.3, §7.4)
+- `internal/handler/log_export_audit_test.go` — real export bytes cross-checked against the page
+  (§7.6)
+- `web/src/components/logs/LogTable.test.ts` — mounted render path, no double masking (§7.5)
 
 ---
 
@@ -526,22 +559,22 @@ GOPROXY=off go test ./internal/services/ -run TestVerifyLogKeyIdentifierMatchesK
 
 It builds an in-memory database with encryption enabled (keys AES-GCM encrypted at rest, correlated
 by HMAC-SHA256), several distinct keys, both success and `400` rows, and one historical row whose key
-has been deleted. Actual output:
+has been deleted. Actual output (regenerated after the §7.1 fix):
 
 ```
 =========================================================================
  PART 1  Key management  vs  request-log identifier
 =========================================================================
-LOG ROW           KEY MGMT SHOWS  LOG COLUMN      MATCH?
--------------------------------------------------------------------------
-log-alpha-bad     sk-p****7d4e    sk-p****7d4e    yes
-log-alpha-ok      sk-p****7d4e    sk-p****7d4e    yes
-log-bravo-bad     sk-p****6a2b    sk-p****6a2b    yes
-log-charlie-ok    sk-a****4b81    sk-a****4b81    yes
+LOG ROW           KEY MGMT SHOWS  LOG COLUMN           MASK MATCHES?
+------------------------------------------------------------------------------
+log-alpha-bad     sk-p****7d4e    sk-p****7d4e#b91b    yes
+log-alpha-ok      sk-p****7d4e    sk-p****7d4e#b91b    yes
+log-bravo-bad     sk-p****6a2b    sk-p****6a2b#55c1    yes
+log-charlie-ok    sk-a****4b81    sk-a****4b81#77ec    yes
 
 3 distinct keys -> 3 distinct identifiers (each key is individually recognizable)
 
-One key, two outcomes:  200 row -> "sk-p****7d4e"   400 row -> "sk-p****7d4e"
+One key, two outcomes:  200 row -> "sk-p****7d4e#b91b"   400 row -> "sk-p****7d4e#b91b"
 
 =========================================================================
  PART 2  Historical row whose key was deleted from key management
@@ -555,22 +588,23 @@ reason         : nothing remains but a one-way hash, so a mask cannot be
 =========================================================================
  PART 3  Search paths
 =========================================================================
-SEARCH INPUT                        KIND                        ROWS
-----------------------------------------------------------------------
-sk-p****7d4e                        mask (copied column)        2
-sk-proj-alpha-9f3c2b1a7d4e          complete key                2
-fp:b91b0e612994                     fingerprint                 2
-fp:7b1e4a90c3d2                     fingerprint (deleted key)   1
-zzzz****zzzz                        mask matching no key        0
+SEARCH INPUT                        KIND                                    ROWS
+----------------------------------------------------------------------------------
+sk-p****7d4e#b91b                   displayed identifier (copied column)    2
+sk-p****7d4e                        bare mask (legacy form)                 2
+sk-proj-alpha-9f3c2b1a7d4e          complete key                            2
+fp:b91b0e612994                     fingerprint                             2
+fp:7b1e4a90c3d2                     fingerprint (deleted key)               1
+zzzz****zzzz                        mask matching no key                    0
 
 =========================================================================
  PART 4  CSV export
 =========================================================================
 key_identifier,key_fingerprint,group_name,status_code
-sk-p****6a2b,fp:55c1f6292cf4,primary,400
-sk-a****4b81,fp:77ec4dce8c08,primary,200
+sk-p****6a2b#55c1,fp:55c1f6292cf4,primary,400
+sk-a****4b81#77ec,fp:77ec4dce8c08,primary,200
 fp:7b1e4a90c3d2,fp:7b1e4a90c3d2,primary,401
-sk-p****7d4e,fp:b91b0e612994,primary,200
+sk-p****7d4e#b91b,fp:b91b0e612994,primary,200
 
 =========================================================================
  PART 5  What the request_logs table actually stores
@@ -589,9 +623,9 @@ storing only a one-way hash and its fingerprint - unchanged by this work.
 --- PASS: TestVerifyLogKeyIdentifierMatchesKeyManagement (0.01s)
 ```
 
-Note what Part 1 also demonstrates about the ambiguity discussed in §3.4: `sk-proj-alpha-…` and
-`sk-proj-bravo-…` both mask to a `sk-p` head and are told apart only by their tails. Distinct here,
-but that is the margin — which is exactly why `key_fingerprint` is retained.
+Note what Part 1 shows about the collision risk of §7.1: `sk-proj-alpha-…` and `sk-proj-bravo-…`
+share the `sk-p` head and are told apart only by their tails. The discriminator is what guarantees
+they stay distinct even when the tails coincide too.
 
 ### 6.2 Test suite comparison against the §2 baseline
 
@@ -608,4 +642,291 @@ Also clean: `go build ./...`, `go vet ./internal/...`, `gofmt -l` on every chang
 `gofmt -l internal/` still reports `internal/keypool/affinity.go`,
 `internal/keypool/affinity_test.go` and `internal/models/setting_info.go`. These are pre-existing and
 untouched by this change; they were left alone rather than reformatted as unrelated churn.
+
+---
+
+## 7. Adversarial self-audit
+
+The sections above were largely reasoned from reading code. This section replaces that reasoning
+with measurement. Everything below is produced by tests in the repository, and the numbers and
+outputs are copied from actual runs.
+
+One real defect was found and fixed. It is described first.
+
+### 7.1 Defect found: colliding masks were indistinguishable — FIXED
+
+**The claim §3.4 made:** masks are not unique, mitigated by keeping the fingerprint in the detail
+modal and in export.
+
+**What measurement showed:** that mitigation does nothing for the problem an operator actually hits.
+Two keys differing only in the middle produced *byte-identical* list values:
+
+```
+COMPLETE KEY                BARE MASK       LOG COLUMN SHOWS
+sk-proj-AAAAAAAAAAAA9z7q    sk-p****9z7q    sk-p****9z7q
+sk-proj-BBBBBBBBBBBB9z7q    sk-p****9z7q    sk-p****9z7q
+   -> two distinct keys render identically as "sk-p****9z7q"
+```
+
+An operator reading two such rows has no way to know they are different keys, and will read one
+key's failure as the other's. That is precisely the failure mode the whole change exists to remove,
+so §3.4's "documented limitation" framing was wrong: it was a defect.
+
+**How likely it is.** A collision needs the same first four *and* last four characters. The first
+four are effectively constant within a provider (`sk-p` for every OpenAI project key), so the
+entropy is the trailing four. Birthday bound over base62⁴ = 14,776,336:
+
+| keys in one group | P(at least one colliding pair) |
+|---|---|
+| 100 | 0.03% |
+| 500 | 0.84% |
+| 1,000 | 3.33% |
+| 5,000 | 57.08% |
+| 10,000 | 96.61% |
+
+gpt-load exists to rotate large key pools, so the thousands column is ordinary usage, not a tail
+case. And the measured search fixture is starker still: 400 keys generated with a shared prefix and
+a shared suffix format produced **one single mask for all 400** — real key formats are not uniformly
+random in their trailing characters either.
+
+**The fix.** The displayed identifier is now the mask plus a four-hex-character discriminator taken
+from the key hash — `utils.KeyIdentifier` in `internal/utils/string_utils.go`:
+
+```
+sk-p****9z7q#2cbb        (key one)
+sk-p****9z7q#75a3        (key two)
+```
+
+Properties, all asserted by tests:
+
+- **Unique per key**, so the list is never ambiguous.
+- **Stable**: derived only from the row's own key hash, so the same key always renders the same
+  string regardless of what else is on the page. A page-local collision check was rejected for
+  exactly this reason — it would have made one key render two different ways.
+- **Still matches key management**: the mask is an exact prefix, so the recognizable part is
+  unchanged and the two screens remain comparable by eye. Tests assert `HasPrefix`, not just
+  equality of some derived value.
+- **No new exposure**: those four characters are the leading characters of the fingerprint this API
+  has always published.
+- **Free**: no extra query, no extra decryption.
+
+`ParseKeyIdentifier` accepts both the new form and the bare mask, so an identifier copied from the
+previous build still resolves.
+
+**Unexpected second benefit, measured:** because the discriminator is an indexed `key_hash` prefix,
+searching the displayed value stopped being a table scan. See §7.2.
+
+### 7.2 Cost of read-time resolution — measured, not estimated
+
+`internal/handler/log_identifier_cost_test.go` instruments a real `GET /logs` with a GORM logger that
+records every executed statement and an `encryption.Service` wrapper that counts `Decrypt` calls.
+Fixture: 120 distinct keys, 3 log rows each.
+
+```
+PAGE SIZE   SQL TOTAL   request_logs   api_keys   DECRYPTS   DISTINCT KEYS ON PAGE
+15          3           2              1          5          5
+30          3           2              1          10         10
+60          3           2              1          20         20
+```
+
+Statements executed for the default page size of 15:
+
+```
+1. SELECT count(*) FROM `request_logs`
+2. SELECT * FROM `request_logs` ORDER BY timestamp desc LIMIT 15
+3. SELECT `key_hash`,`key_value` FROM `api_keys` WHERE key_hash IN ("44c2…","5d0b…", …)
+```
+
+- **SQL is constant in page size**: 3 statements always. Two of them (count, find) are pre-existing;
+  this feature adds exactly one batched `IN` query against an indexed column. **Not N+1.**
+- **Decryption is per distinct key, never per row.** A separate test drives 50 rows that all share
+  one key: **1 decrypt, 3 statements**. Deduplication before the lookup is what makes this hold, and
+  the test fails if it is removed.
+
+Search cost by input kind, 400 keys (all sharing one bare mask by construction):
+
+```
+KIND                        SQL   DECRYPTS   ROWS MATCHED
+displayed identifier        2     1          1
+bare mask (legacy form)     2     400        400
+fingerprint                 1     0          1
+complete key                1     0          1
+```
+
+- Fingerprint and complete-key search never touch `api_keys` at all — unchanged from before.
+- A bare mask must compare plaintext, so it decrypts the table. This is the one genuinely expensive
+  path the feature adds, it is bounded by `maskSearchKeyLimit`, and it is no longer what the column
+  shows.
+- The displayed identifier narrows by an indexed hash prefix first: **400 decryptions down to 1**.
+
+### 7.3 Key lifecycle — three states, actual output
+
+`TestAuditKeyLifecycleNeverMisattributes` performs a real `ENCRYPTION_KEY` rotation the way
+`internal/commands/migrate.go` does (re-encrypt and re-hash `api_keys`, leave `request_logs` alone):
+
+```
+LOG ROW                 KEY STATE                       COLUMN SHOWS         KIND
+life-deleted            deleted from key management     fp:e001a49e36c2      fingerprint
+life-historical         never resolvable (hash only)    fp:0f1e2d3c4b5a      fingerprint
+life-rotated-after      live key, post-rotation row     sk-r****6789#eb55    masked identifier
+life-rotated-before     live key, pre-rotation row      fp:72e7d6c7d2dd      fingerprint
+life-survivor           live key, pre-rotation row      fp:948a35d81d86      fingerprint
+```
+
+The test asserts, for every unresolvable row, that the identifier (a) is exactly the fingerprint,
+(b) contains no mask marker, and (c) **is not the identifier of any live key** — the last being the
+direct check that key A's failure is never attributed to key B.
+
+**A correction to §1.9 and §3.3.** Round 1 described the rotation gap as affecting "rows written
+before the rotation" and treated it as a corner case. Measurement shows the blast radius is wider
+and worth stating plainly: since the rotation re-hashes every key, **every pre-rotation log row
+loses its mask — including rows belonging to keys that are still present and untouched.**
+`life-survivor` above is exactly that case, and my first version of this test asserted it would
+still resolve. It does not. The cost is recognizability on historical rows after a rotation, not
+correctness: those rows show a fingerprint and remain searchable by it (verified below). This is a
+pre-existing gap in the rotation tooling that this feature inherits; closing it would mean
+re-hashing `request_logs`, which is out of scope here.
+
+Search after rotation:
+
+```
+SEARCH INPUT                    KIND                       ROWS   WHICH
+sk-s****ijkl#02d3               survivor, no post-rot row  0
+sk-r****6789#eb55               rotated key, post-rot row  1      life-rotated-after
+fp:948a35d81d86                 survivor pre-rotation fp   1      life-survivor
+fp:e001a49e36c2                 deleted key fingerprint    1      life-deleted
+fp:0f1e2d3c4b5a                 historical row fingerprint 1      life-historical
+```
+
+Pre-rotation rows stay reachable by fingerprint. That is the concrete reason the fingerprint is
+retained alongside the mask rather than replaced by it.
+
+### 7.4 Misconfiguration probed: `ENCRYPTION_KEY` removed without migrating
+
+Not asked for, but found while working through §7.3 and worth recording because it is the one state
+where the join succeeds but decryption does not. If `ENCRYPTION_KEY` is removed while `api_keys`
+still holds ciphertext and pre-existing hashes, the hash still matches, and `Decrypt` becomes a
+no-op that returns the ciphertext.
+
+```
+LOG ROW             KEY MGMT SHOWS  LOG COLUMN SHOWS
+misconfig-one       2eed****b725    2eed****b725#9c85
+misconfig-two       3bb8****14f9    3bb8****14f9#ab6c
+```
+
+Verified properties: the two keys stay distinct, no plaintext appears, and the log column still
+begins with exactly what key management shows — because both screens decrypt through the same
+service and therefore fail identically. So an operator can still pair a row with a key row; the
+characters simply are not the real key. This state already mis-renders key management
+(`internal/handler/key_handler.go:254-263` decrypts the same way), so it is a pre-existing
+consequence of the misconfiguration rather than something the log identifier introduces. Recorded
+rather than "fixed" because the fix belongs in the key migration tooling, not here.
+
+### 7.5 No double processing between backend and frontend — asserted
+
+The risk: the backend now returns an already-masked value while `web/src/utils/display.ts` still
+exports a masking function, so a second application would corrupt the display.
+
+`web/src/components/logs/LogTable.test.ts` mounts the real component with a backend-shaped response
+and asserts:
+
+- the cell contains the backend identifier **verbatim** (`sk-l****mnop#b91b`);
+- the double-masked form (`maskKey("sk-l****mnop#b91b")` → `sk-l****b91b`) is **absent**. The test
+  first asserts these two strings differ, so it cannot pass vacuously;
+- the key management value for the same key (`maskKey(plaintext)` → `sk-l****mnop`) is an exact
+  prefix of the log value, and is present in the rendered output;
+- a fallback row renders its fingerprint and contains no `****` at all;
+- two colliding-mask rows render two different strings.
+
+Confirmed by code reading and now by assertion: `renderKeyIdentifier`
+(`web/src/components/logs/LogTable.vue:245`) renders `row.key_value` directly and never calls
+`maskKey`. The key column and the log column each mask exactly once — the key column in the browser
+because it receives plaintext, the log column on the server because the browser never receives the
+key.
+
+### 7.6 Export bytes — generated and cross-checked
+
+`internal/handler/log_export_audit_test.go` generates the real export and compares it against what
+`GET /logs` puts on the page for the same rows. Actual bytes:
+
+```
+key_identifier,key_fingerprint,group_name,status_code
+sk-o****ijkl#6c53,fp:6c53b782fb8f,primary,400
+fp:9a8b7c6d5e4f,fp:9a8b7c6d5e4f,primary,401
+sk-p****9z7q#ba3a,fp:ba3a1325aa83,primary,400
+sk-p****9z7q#f16c,fp:f16c39e3b759,primary,400
+```
+
+```
+EXPORT key_identifier   PAGE key_value          SAME?
+sk-o****ijkl#6c53       sk-o****ijkl#6c53       yes
+fp:9a8b7c6d5e4f         fp:9a8b7c6d5e4f         yes
+sk-p****9z7q#ba3a       sk-p****9z7q#ba3a       yes
+sk-p****9z7q#f16c       sk-p****9z7q#f16c       yes
+```
+
+Asserted on the bytes: identifier column equals the page value for every row; no complete key
+appears; no full `key_hash` appears; every row has exactly four columns. Rows 3 and 4 are the
+colliding pair — distinguishable in the export as well as on screen.
+
+### 7.7 Confirmed unchanged
+
+Verified in this pass and found sound, with the evidence that settles each:
+
+| Claim | Evidence |
+|---|---|
+| Nothing new is persisted to `request_logs` | Part 5 of the verification test reloads every row and prints stored `key_value`: all `fp:…`. Asserted no mask marker is ever stored |
+| `sanitizeRequestLog` and the purge job unaffected | Untouched; `TestPurgeHistoricalKeyValuesRemovesReversibleCredentials` and `TestRecordReplacesSuppliedCredentialWithFingerprint` pass unmodified |
+| Complete keys are never diverted into mask resolution | `TestParseKeyIdentifierRejectsCompleteKeysAndOtherIdentifiers` covers 14 malformed inputs including complete keys and malformed discriminators |
+| Fingerprint and complete-key search unchanged | Measured: 1 SQL statement, 0 decryptions, `api_keys` never touched (§7.2) |
+| Missing `api_keys` degrades instead of failing | `TestResolveKeyIdentifiersFallBackWhenAPIKeysUnavailable`; the three pre-existing handler tests still pass against a DB that migrates `RequestLog` only |
+| Short keys never render verbatim | `TestMaskKeyIdentifierNeverRevealsShortKey` |
+| One key renders the same on its success and failure rows | Verification test Part 1 compares the 200 row and the 400 row explicitly |
+
+### 7.8 Test suite comparison for this pass
+
+| Suite | Round-1 baseline (§2) | After round 2 | Delta |
+|---|---|---|---|
+| Go (`go test -count=1 ./...`) | all pass | all pass | no new failures; 14 packages ok |
+| Frontend (`vitest run`) | 16 files / 66 tests | 18 files / 77 tests | +2 files, +11 tests (all new) |
+
+Difference set against the original baseline: **empty**. No pre-existing repository test failed, was
+modified, skipped, or weakened in either round.
+
+Tests changed in this pass were all written by me in round 1, and they changed because round 1's
+display policy was wrong, not to make failures disappear:
+
+- `TestResolveKeyIdentifiersMatchKeyManagementMask` — asserted the identifier *equals* the key
+  management mask; now asserts the mask is an exact prefix and that the identifier equals
+  `utils.KeyIdentifier`, plus that two keys never share an identifier.
+- `TestStreamLogKeysToCSVExportsMaskAndFingerprint` — same adjustment for the export column.
+- `TestVerifyLogKeyIdentifierMatchesKeyManagement` — Part 1 compares by prefix; the distinctness
+  check now counts identifiers rather than masks.
+- `ParseKeyMask` → `ParseKeyIdentifier` and `ResolveKeyMasks` → `ResolveKeyIdentifiers` renames.
+
+Also clean: `go build ./...`, `go vet ./internal/...`, `gofmt -l` on all changed Go files, `eslint .`
+(whole project), `prettier --check`, and `vue-tsc --noEmit`.
+
+### 7.9 How to re-run the audit
+
+```bash
+cd repos/gpt-load
+
+# Cost: statements and decryptions per page, and per search input kind
+GOPROXY=off go test ./internal/handler/ -v \
+  -run 'TestLogPageResolutionCostIsBounded|TestLogPageDeduplicatesRepeatedKeyBeforeLookup|TestKeySearchCostByInputKind'
+
+# Collision, key lifecycle, and the misconfiguration probe
+GOPROXY=off go test ./internal/services/ -v -run 'TestAudit'
+
+# Export bytes cross-checked against the page
+GOPROXY=off go test ./internal/handler/ -v -run TestExportBytesMatchPageDisplay
+
+# Side-by-side key management vs log column
+GOPROXY=off go test ./internal/services/ -v -run TestVerifyLogKeyIdentifierMatchesKeyManagement
+
+# Frontend render path (no double masking)
+cd web && npx --no-install vitest run src/components/logs/LogTable.test.ts
+```
+
 

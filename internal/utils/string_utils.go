@@ -33,6 +33,35 @@ func MaskKeyIdentifier(key string) string {
 	return key[:4] + KeyMaskMarker + key[length-4:]
 }
 
+// KeyIdentifier returns the identifier shown for a key in request logs: its
+// mask, followed by a short discriminator derived from the key hash.
+//
+// The mask alone is not unique. It retains eight characters, and provider
+// prefixes are shared — every OpenAI project key starts "sk-p" — so two keys in
+// one group sharing both the first and the last four characters is likely at a
+// few thousand keys, not hypothetical. Two log rows would then be
+// indistinguishable, and an operator would read one key's failure as another's.
+// The discriminator removes that ambiguity while keeping the mask as an exact
+// prefix, so the value still matches the key management column by eye.
+//
+// The discriminator exposes nothing new: those characters are already the
+// leading characters of the fingerprint this package has always published.
+func KeyIdentifier(key, keyHash string) string {
+	mask := MaskKeyIdentifier(key)
+	if mask == "" {
+		return ""
+	}
+
+	discriminator := strings.ToLower(strings.TrimSpace(keyHash))
+	if len(discriminator) > keyIdentifierDiscriminatorLength {
+		discriminator = discriminator[:keyIdentifierDiscriminatorLength]
+	}
+	if discriminator == "" {
+		return mask
+	}
+	return mask + KeyIdentifierSeparator + discriminator
+}
+
 // TruncateString shortens a string to a maximum length.
 func TruncateString(s string, maxLength int) string {
 	if len(s) > maxLength {

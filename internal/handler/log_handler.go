@@ -20,11 +20,10 @@ import (
 // not contain RequestLog.KeyHash: even a one-way hash is internal correlation
 // material and must never be serialized by the API.
 //
-// KeyValue carries the identifier shown in the list. It is the masked form of
-// the key when the row can still be resolved to a key in key management, and the
-// non-reversible fingerprint otherwise. KeyFingerprint always carries the
-// fingerprint, because a mask retains only eight characters and is not
-// guaranteed unique.
+// KeyValue carries the identifier shown in the list. It is the masked key plus a
+// short discriminator when the row can still be resolved to a key in key
+// management, and the non-reversible fingerprint otherwise. KeyFingerprint always
+// carries the fingerprint.
 type LogResponse struct {
 	ID              string    `json:"id"`
 	Timestamp       time.Time `json:"timestamp"`
@@ -48,14 +47,14 @@ type LogResponse struct {
 	RequestBody     string    `json:"request_body"`
 }
 
-// newLogResponse builds the public representation. keyMasks maps key hashes to
-// masked keys for rows whose key still exists; a row absent from the map falls
-// back to its fingerprint.
-func newLogResponse(logEntry models.RequestLog, keyMasks map[string]string) LogResponse {
+// newLogResponse builds the public representation. keyIdentifiers maps key
+// hashes to display identifiers for rows whose key still exists; a row absent
+// from the map falls back to its fingerprint.
+func newLogResponse(logEntry models.RequestLog, keyIdentifiers map[string]string) LogResponse {
 	fingerprint := utils.KeyFingerprint(logEntry.KeyHash)
 	identifier := fingerprint
-	if mask, ok := keyMasks[logEntry.KeyHash]; ok {
-		identifier = mask
+	if resolved, ok := keyIdentifiers[logEntry.KeyHash]; ok {
+		identifier = resolved
 	}
 
 	return LogResponse{
@@ -128,9 +127,9 @@ func (s *Server) respondWithLogs(c *gin.Context, filter services.LogFilter) {
 		keyHashes = append(keyHashes, logs[i].KeyHash)
 	}
 	// One batched, indexed lookup for the whole page rather than one per row.
-	keyMasks := s.LogService.ResolveKeyMasks(keyHashes)
+	keyIdentifiers := s.LogService.ResolveKeyIdentifiers(keyHashes)
 	for i := range logs {
-		items[i] = newLogResponse(logs[i], keyMasks)
+		items[i] = newLogResponse(logs[i], keyIdentifiers)
 	}
 
 	response.Success(c, &response.PaginatedResponse{

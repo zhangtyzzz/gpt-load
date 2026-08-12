@@ -22,6 +22,15 @@ const (
 	keyMaskEdgeLength = 4
 	// keyMaskLength is the exact length of a well-formed mask: head + marker + tail.
 	keyMaskLength = keyMaskEdgeLength*2 + len(KeyMaskMarker)
+	// KeyIdentifierSeparator joins a mask to its disambiguating suffix.
+	KeyIdentifierSeparator = "#"
+	// keyIdentifierDiscriminatorLength is how many key-hash characters the
+	// disambiguating suffix keeps. A mask retains only eight characters of the
+	// key and provider prefixes are shared, so masks alone collide in practice:
+	// with a few thousand keys in one group, two of them sharing both the first
+	// and the last four characters is likely rather than hypothetical. The
+	// suffix makes the displayed identifier unique per key.
+	keyIdentifierDiscriminatorLength = 4
 )
 
 var sensitiveNames = map[string]struct{}{
@@ -332,31 +341,59 @@ func ParseKeyFingerprint(value string) (string, bool) {
 	return prefix, true
 }
 
-// ParseKeyMask recognises a masked key identifier as produced by
-// MaskKeyIdentifier and returns the retained head and tail so a caller can find
-// the keys it could have come from.
+// ParseKeyIdentifier recognises a request-log key identifier as produced by
+// KeyIdentifier and returns the retained head and tail of the mask plus the
+// key-hash prefix from the disambiguating suffix, if one is present.
 //
-// The shape check is deliberately exact — length keyMaskLength with the marker
-// at a fixed offset — so a complete upstream key can never be mistaken for a
-// mask and diverted away from exact-hash lookup. Matching is case-sensitive
-// because API keys are.
-func ParseKeyMask(value string) (head, tail string, ok bool) {
+// Both forms are accepted:
+//
+//	"AAAA****ZZZZ"        -> head/tail only; matches every key with that mask
+//	"AAAA****ZZZZ#hhhh"   -> additionally narrowed to one key hash prefix
+//
+// The bare form stays valid so an identifier copied from an older build, or a
+// mask typed by hand, still resolves.
+//
+// The shape check is deliberately exact so a complete upstream key can never be
+// mistaken for an identifier and diverted away from exact-hash lookup. Mask
+// matching is case-sensitive because API keys are; the hash suffix is
+// lower-cased because hex digests are stored lower-case.
+func ParseKeyIdentifier(value string) (head, tail, hashPrefix string, ok bool) {
 	value = strings.TrimSpace(value)
-	if len(value) != keyMaskLength {
-		return "", "", false
-	}
-	if value[keyMaskEdgeLength:keyMaskEdgeLength+len(KeyMaskMarker)] != KeyMaskMarker {
-		return "", "", false
+
+	mask := value
+	if separatorIndex := strings.Index(value, KeyIdentifierSeparator); separatorIndex >= 0 {
+		mask = value[:separatorIndex]
+		suffix := strings.ToLower(value[separatorIndex+len(KeyIdentifierSeparator):])
+		if len(suffix) != keyIdentifierDiscriminatorLength || !isLowerHex(suffix) {
+			return "", "", "", false
+		}
+		hashPrefix = suffix
 	}
 
-	head = value[:keyMaskEdgeLength]
-	tail = value[keyMaskEdgeLength+len(KeyMaskMarker):]
+	if len(mask) != keyMaskLength {
+		return "", "", "", false
+	}
+	if mask[keyMaskEdgeLength:keyMaskEdgeLength+len(KeyMaskMarker)] != KeyMaskMarker {
+		return "", "", "", false
+	}
+
+	head = mask[:keyMaskEdgeLength]
+	tail = mask[keyMaskEdgeLength+len(KeyMaskMarker):]
 	// A head or tail containing the marker itself would make the split ambiguous
 	// and cannot come from MaskKeyIdentifier applied to a real key.
 	if strings.Contains(head, "*") || strings.Contains(tail, "*") {
-		return "", "", false
+		return "", "", "", false
 	}
-	return head, tail, true
+	return head, tail, hashPrefix, true
+}
+
+func isLowerHex(value string) bool {
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // KeyMatchesMask reports whether a plaintext key would render as the given mask.

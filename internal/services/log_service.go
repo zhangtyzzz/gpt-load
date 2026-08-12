@@ -65,11 +65,11 @@ func NewLogService(db *gorm.DB, encryptionSvc encryption.Service) *LogService {
 	}
 }
 
-// ResolveKeyMasks maps request-log key hashes to the masked form of the live
-// api_keys row each one belongs to.
+// ResolveKeyIdentifiers maps request-log key hashes to the display identifier of
+// the live api_keys row each one belongs to.
 //
-// The mask is derived by decrypting api_keys.key_value, which is the same source
-// the key management screen masks. Consistency between the two screens is
+// The identifier is derived by decrypting api_keys.key_value, which is the same
+// source the key management screen masks. Consistency between the two screens is
 // therefore structural rather than a convention two code paths must both
 // remember to follow, and nothing has to be persisted alongside the log row.
 //
@@ -77,8 +77,11 @@ func NewLogService(db *gorm.DB, encryptionSvc encryption.Service) *LogService {
 // ENCRYPTION_KEY rotation — are simply absent from the result. Callers fall back
 // to the fingerprint for those. A database error is treated the same way: log
 // listing must keep working on a database where api_keys is unavailable.
-func (s *LogService) ResolveKeyMasks(keyHashes []string) map[string]string {
-	masks := make(map[string]string)
+//
+// Cost is one batched, indexed query per chunkSize distinct hashes and one
+// decryption per distinct key, never per row.
+func (s *LogService) ResolveKeyIdentifiers(keyHashes []string) map[string]string {
+	identifiers := make(map[string]string)
 
 	unique := make([]string, 0, len(keyHashes))
 	seen := make(map[string]struct{}, len(keyHashes))
@@ -93,7 +96,7 @@ func (s *LogService) ResolveKeyMasks(keyHashes []string) map[string]string {
 		unique = append(unique, keyHash)
 	}
 	if len(unique) == 0 {
-		return masks
+		return identifiers
 	}
 
 	for start := 0; start < len(unique); start += chunkSize {
@@ -105,8 +108,8 @@ func (s *LogService) ResolveKeyMasks(keyHashes []string) map[string]string {
 			Where("key_hash IN ?", unique[start:end]).
 			Find(&keys).Error; err != nil {
 			// Never attach the query parameters: they are key hashes.
-			logrus.WithError(err).Debug("Failed to resolve request-log key masks; falling back to fingerprints")
-			return masks
+			logrus.WithError(err).Debug("Failed to resolve request-log key identifiers; falling back to fingerprints")
+			return identifiers
 		}
 
 		for _, key := range keys {
@@ -114,29 +117,38 @@ func (s *LogService) ResolveKeyMasks(keyHashes []string) map[string]string {
 			if err != nil {
 				// A key that cannot be decrypted cannot be identified; the caller
 				// falls back to the fingerprint for this row.
-				logrus.WithError(err).Debug("Failed to decrypt key while resolving request-log key mask")
+				logrus.WithError(err).Debug("Failed to decrypt key while resolving request-log key identifier")
 				continue
 			}
-			if mask := utils.MaskKeyIdentifier(plaintext); mask != "" {
-				masks[key.KeyHash] = mask
+			if identifier := utils.KeyIdentifier(plaintext, key.KeyHash); identifier != "" {
+				identifiers[key.KeyHash] = identifier
 			}
 		}
 	}
 
-	return masks
+	return identifiers
 }
 
 // resolveMaskedKeyHashes finds the key hashes of every api_keys row that would
-// render as the given mask. Masks retain only eight characters and provider key
-// prefixes are shared, so more than one key can match; every match is returned
-// so the caller shows all candidate rows rather than silently picking one.
-func (s *LogService) resolveMaskedKeyHashes(head, tail string) []string {
+// render as the given mask, optionally narrowed to a key-hash prefix taken from a
+// displayed identifier's discriminator.
+//
+// With a prefix the lookup is indexed and only a handful of rows are decrypted.
+// Without one — a bare mask, which the column no longer shows but which is still
+// accepted — every key must be decrypted to compare it, and every match is
+// returned so an ambiguous mask surfaces all candidates instead of silently
+// picking one.
+func (s *LogService) resolveMaskedKeyHashes(head, tail, hashPrefix string) []string {
 	hashes := make([]string, 0, 1)
 	seen := make(map[string]struct{})
 
+	query := s.DB.Model(&models.APIKey{}).Select("key_hash", "key_value")
+	if hashPrefix != "" {
+		query = query.Where("key_hash LIKE ?", hashPrefix+"%")
+	}
+
 	var batch []models.APIKey
-	err := s.DB.Model(&models.APIKey{}).
-		Select("key_hash", "key_value").
+	err := query.
 		FindInBatches(&batch, chunkSize, func(_ *gorm.DB, _ int) error {
 			for _, key := range batch {
 				if key.KeyHash == "" {
@@ -184,15 +196,15 @@ func (s *LogService) logFiltersScope(filter LogFilter) func(db *gorm.DB) *gorm.D
 			db = db.Where("group_name LIKE ?", "%"+filter.GroupName+"%")
 		}
 		if filter.KeyValue != "" {
-			// Ordering matters. A mask is checked first because it is the value now
-			// shown in the list, and operators search by copying that column. Its
-			// shape check is exact, so a complete key cannot be diverted here.
-			if head, tail, ok := utils.ParseKeyMask(filter.KeyValue); ok {
-				keyHashes := s.resolveMaskedKeyHashes(head, tail)
+			// Ordering matters. An identifier is checked first because it is the
+			// value shown in the list, and operators search by copying that column.
+			// Its shape check is exact, so a complete key cannot be diverted here.
+			if head, tail, hashPrefix, ok := utils.ParseKeyIdentifier(filter.KeyValue); ok {
+				keyHashes := s.resolveMaskedKeyHashes(head, tail, hashPrefix)
 				if len(keyHashes) == 0 {
-					// No key renders as this mask. Match nothing explicitly rather
-					// than falling through to a hash comparison that would return
-					// nothing for an unrelated reason.
+					// No key renders as this identifier. Match nothing explicitly
+					// rather than falling through to a hash comparison that would
+					// return nothing for an unrelated reason.
 					db = db.Where("1 = 0")
 				} else {
 					db = db.Where("key_hash IN ?", keyHashes)
@@ -275,21 +287,20 @@ func (s *LogService) StreamLogKeysToCSV(filter LogFilter, writer io.Writer) erro
 		return fmt.Errorf("failed to fetch log keys: %w", err)
 	}
 
-	// Export the masked identifier so a row can be matched against key
+	// Export the display identifier so a row can be matched against key
 	// management, alongside the non-reversible fingerprint so the export always
-	// carries a unique, shareable identifier even when a mask is ambiguous or
-	// the key can no longer be resolved.
+	// carries a shareable identifier even when the key can no longer be resolved.
 	keyHashes := make([]string, 0, len(results))
 	for _, record := range results {
 		keyHashes = append(keyHashes, record.KeyHash)
 	}
-	masks := s.ResolveKeyMasks(keyHashes)
+	resolved := s.ResolveKeyIdentifiers(keyHashes)
 
 	for _, record := range results {
 		fingerprint := utils.KeyFingerprint(record.KeyHash)
 		identifier := fingerprint
-		if mask, ok := masks[record.KeyHash]; ok {
-			identifier = mask
+		if value, ok := resolved[record.KeyHash]; ok {
+			identifier = value
 		}
 		csvRecord := []string{
 			identifier,

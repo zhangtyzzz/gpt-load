@@ -325,7 +325,7 @@ func seedKeyWithLogs(
 	return keyHash
 }
 
-func TestResolveKeyMasksMatchesKeyManagementMask(t *testing.T) {
+func TestResolveKeyIdentifiersMatchKeyManagementMask(t *testing.T) {
 	database := newKeyIdentifierTestDB(t)
 	enc, err := encryption.NewService("unit-test-encryption-key")
 	if err != nil {
@@ -338,27 +338,40 @@ func TestResolveKeyMasksMatchesKeyManagementMask(t *testing.T) {
 	betaHash := seedKeyWithLogs(t, database, enc, keyBeta, "log-beta", 400)
 
 	service := NewLogService(database, enc)
-	masks := service.ResolveKeyMasks([]string{alphaHash, betaHash})
+	identifiers := service.ResolveKeyIdentifiers([]string{alphaHash, betaHash})
 
-	// The expected value is what the key management screen renders: the mask of
-	// the decrypted key.
-	if got, want := masks[alphaHash], utils.MaskKeyIdentifier(keyAlpha); got != want {
-		t.Errorf("mask for alpha = %q, want %q", got, want)
+	// The identifier must begin with exactly what the key management screen
+	// renders — the mask of the decrypted key — so the two can be matched by eye.
+	// The remainder is the discriminator that keeps colliding masks apart.
+	for name, expected := range map[string]struct {
+		hash string
+		key  string
+	}{
+		"alpha": {alphaHash, keyAlpha},
+		"beta":  {betaHash, keyBeta},
+	} {
+		mask := utils.MaskKeyIdentifier(expected.key)
+		identifier := identifiers[expected.hash]
+		if !strings.HasPrefix(identifier, mask) {
+			t.Errorf("identifier for %s = %q, want it to begin with the key management mask %q",
+				name, identifier, mask)
+		}
+		if got, want := identifier, utils.KeyIdentifier(expected.key, expected.hash); got != want {
+			t.Errorf("identifier for %s = %q, want %q", name, got, want)
+		}
 	}
-	if got, want := masks[betaHash], utils.MaskKeyIdentifier(keyBeta); got != want {
-		t.Errorf("mask for beta = %q, want %q", got, want)
+
+	if identifiers[alphaHash] == identifiers[betaHash] {
+		t.Errorf("distinct keys resolved to the same identifier %q", identifiers[alphaHash])
 	}
-	if masks[alphaHash] == masks[betaHash] {
-		t.Errorf("distinct keys resolved to the same mask %q", masks[alphaHash])
-	}
-	for hash, mask := range masks {
-		if strings.Contains(mask, "alpha-abcdefghij") || strings.Contains(mask, "beta-qrstuvwxyz") {
-			t.Errorf("mask for %s leaked the middle of the key: %q", hash, mask)
+	for hash, identifier := range identifiers {
+		if strings.Contains(identifier, "alpha-abcdefghij") || strings.Contains(identifier, "beta-qrstuvwxyz") {
+			t.Errorf("identifier for %s leaked the middle of the key: %q", hash, identifier)
 		}
 	}
 }
 
-func TestResolveKeyMasksOmitsUnresolvableHashes(t *testing.T) {
+func TestResolveKeyIdentifiersOmitUnresolvableHashes(t *testing.T) {
 	database := newKeyIdentifierTestDB(t)
 	enc, err := encryption.NewService("")
 	if err != nil {
@@ -371,7 +384,7 @@ func TestResolveKeyMasksOmitsUnresolvableHashes(t *testing.T) {
 	const deletedKeyHash = "deadbeefdeadbeefdeadbeefdeadbeef"
 
 	service := NewLogService(database, enc)
-	masks := service.ResolveKeyMasks([]string{liveHash, deletedKeyHash, ""})
+	masks := service.ResolveKeyIdentifiers([]string{liveHash, deletedKeyHash, ""})
 
 	if _, ok := masks[liveHash]; !ok {
 		t.Errorf("live key was not resolved")
@@ -384,7 +397,7 @@ func TestResolveKeyMasksOmitsUnresolvableHashes(t *testing.T) {
 	}
 }
 
-func TestResolveKeyMasksFallsBackWhenAPIKeysUnavailable(t *testing.T) {
+func TestResolveKeyIdentifiersFallBackWhenAPIKeysUnavailable(t *testing.T) {
 	// newRequestLogTestDB has no api_keys table, standing in for a database where
 	// the table is unavailable. Log listing must degrade to fingerprints, not fail.
 	database := newRequestLogTestDB(t)
@@ -394,7 +407,7 @@ func TestResolveKeyMasksFallsBackWhenAPIKeysUnavailable(t *testing.T) {
 	}
 	service := NewLogService(database, enc)
 
-	masks := service.ResolveKeyMasks([]string{enc.Hash("sk-any-key-value-here")})
+	masks := service.ResolveKeyIdentifiers([]string{enc.Hash("sk-any-key-value-here")})
 	if len(masks) != 0 {
 		t.Fatalf("expected no masks when api_keys is unavailable, got %v", masks)
 	}
@@ -540,8 +553,11 @@ func TestStreamLogKeysToCSVExportsMaskAndFingerprint(t *testing.T) {
 	if !ok {
 		t.Fatalf("CSV omitted the live key row: %s", output.String())
 	}
-	if got, want := liveRow[0], utils.MaskKeyIdentifier(liveKey); got != want {
+	if got, want := liveRow[0], utils.KeyIdentifier(liveKey, liveHash); got != want {
 		t.Errorf("CSV identifier for live key = %q, want %q", got, want)
+	}
+	if mask := utils.MaskKeyIdentifier(liveKey); !strings.HasPrefix(liveRow[0], mask) {
+		t.Errorf("CSV identifier %q does not begin with the key management mask %q", liveRow[0], mask)
 	}
 
 	orphanRow, ok := rowsByFingerprint[utils.KeyFingerprint(orphanHash)]

@@ -110,8 +110,8 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	fmt.Println("=========================================================================")
 	fmt.Println(" PART 1  Key management  vs  request-log identifier")
 	fmt.Println("=========================================================================")
-	fmt.Printf("%-16s  %-14s  %-14s  %-8s\n", "LOG ROW", "KEY MGMT SHOWS", "LOG COLUMN", "MATCH?")
-	fmt.Println(strings.Repeat("-", 73))
+	fmt.Printf("%-16s  %-14s  %-19s  %-8s\n", "LOG ROW", "KEY MGMT SHOWS", "LOG COLUMN", "MASK MATCHES?")
+	fmt.Println(strings.Repeat("-", 78))
 
 	var logs []models.RequestLog
 	if err := database.Order("id asc").Find(&logs).Error; err != nil {
@@ -122,7 +122,7 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	for _, logRow := range logs {
 		keyHashes = append(keyHashes, logRow.KeyHash)
 	}
-	masks := service.ResolveKeyMasks(keyHashes)
+	resolved := service.ResolveKeyIdentifiers(keyHashes)
 
 	// What key management renders for each key: the decrypted value, masked in the
 	// browser by web/src/utils/display.ts maskKey().
@@ -140,8 +140,8 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	}
 
 	identifierFor := func(logRow models.RequestLog) string {
-		if mask, ok := masks[logRow.KeyHash]; ok {
-			return mask
+		if identifier, ok := resolved[logRow.KeyHash]; ok {
+			return identifier
 		}
 		return utils.KeyFingerprint(logRow.KeyHash)
 	}
@@ -154,13 +154,18 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 			continue
 		}
 		liveRowsChecked++
+		// The log column is the key management mask plus a discriminator, so the
+		// mask must be an exact prefix. That is what makes the two comparable by
+		// eye while keeping colliding masks apart.
+		matches := strings.HasPrefix(identifier, expected)
 		verdict := "yes"
-		if identifier != expected {
+		if !matches {
 			verdict = "NO"
 		}
-		fmt.Printf("%-16s  %-14s  %-14s  %-8s\n", logRow.ID, expected, identifier, verdict)
-		if identifier != expected {
-			t.Errorf("log row %s shows %q but key management shows %q", logRow.ID, identifier, expected)
+		fmt.Printf("%-16s  %-14s  %-19s  %-8s\n", logRow.ID, expected, identifier, verdict)
+		if !matches {
+			t.Errorf("log row %s shows %q which does not begin with key management's %q",
+				logRow.ID, identifier, expected)
 		}
 	}
 	if liveRowsChecked != len(scenarios) {
@@ -169,13 +174,14 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 
 	// Distinct keys must be distinguishable, otherwise the column is useless even
 	// when every value technically "matches".
-	distinctMasks := make(map[string]struct{})
-	for _, mask := range keyManagementDisplay {
-		distinctMasks[mask] = struct{}{}
+	distinctIdentifiers := make(map[string]struct{})
+	for hash := range keyManagementDisplay {
+		distinctIdentifiers[resolved[hash]] = struct{}{}
 	}
-	fmt.Printf("\n%d distinct keys -> %d distinct identifiers", len(keyManagementDisplay), len(distinctMasks))
-	if len(distinctMasks) != len(keyManagementDisplay) {
-		t.Errorf("masks collide: %d keys share %d identifiers", len(keyManagementDisplay), len(distinctMasks))
+	fmt.Printf("\n%d distinct keys -> %d distinct identifiers", len(keyManagementDisplay), len(distinctIdentifiers))
+	if len(distinctIdentifiers) != len(keyManagementDisplay) {
+		t.Errorf("identifiers collide: %d keys share %d identifiers",
+			len(keyManagementDisplay), len(distinctIdentifiers))
 	}
 	fmt.Println(" (each key is individually recognizable)")
 
@@ -229,15 +235,16 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	fmt.Println("=========================================================================")
 	fmt.Println(" PART 3  Search paths")
 	fmt.Println("=========================================================================")
-	fmt.Printf("%-34s  %-26s  %-5s\n", "SEARCH INPUT", "KIND", "ROWS")
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Printf("%-34s  %-38s  %-5s\n", "SEARCH INPUT", "KIND", "ROWS")
+	fmt.Println(strings.Repeat("-", 82))
 
 	searchCases := []struct {
 		input string
 		kind  string
 		want  int64
 	}{
-		{masks[alphaHash], "mask (copied column)", 2},
+		{resolved[alphaHash], "displayed identifier (copied column)", 2},
+		{utils.MaskKeyIdentifier("sk-proj-alpha-9f3c2b1a7d4e"), "bare mask (legacy form)", 2},
 		{"sk-proj-alpha-9f3c2b1a7d4e", "complete key", 2},
 		{utils.KeyFingerprint(alphaHash), "fingerprint", 2},
 		{utils.KeyFingerprint(deletedKeyHash), "fingerprint (deleted key)", 1},
@@ -254,7 +261,7 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 			t.Errorf("search %q (%s) returned %d rows, want %d",
 				searchCase.input, searchCase.kind, count, searchCase.want)
 		}
-		fmt.Printf("%-34s  %-26s  %-5d%s\n", searchCase.input, searchCase.kind, count, verdict)
+		fmt.Printf("%-34s  %-38s  %-5d%s\n", searchCase.input, searchCase.kind, count, verdict)
 	}
 
 	// ---------------------------------------------------------------- part 4
@@ -287,8 +294,8 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	for _, record := range records[1:] {
 		exportedIdentifiers[record[0]] = struct{}{}
 	}
-	if _, ok := exportedIdentifiers[masks[alphaHash]]; !ok {
-		t.Errorf("CSV did not carry the masked identifier %q", masks[alphaHash])
+	if _, ok := exportedIdentifiers[resolved[alphaHash]]; !ok {
+		t.Errorf("CSV did not carry the display identifier %q", resolved[alphaHash])
 	}
 	if _, ok := exportedIdentifiers[utils.KeyFingerprint(deletedKeyHash)]; !ok {
 		t.Errorf("CSV did not carry the historical row fingerprint")
