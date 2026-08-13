@@ -249,7 +249,7 @@ const renderKeyIdentifier = (row: LogRow) => {
     h(
       NEllipsis,
       {
-        style: "max-width: 150px",
+        style: "max-width: 230px",
         title: unresolved ? t("logs.keyIdentifierUnresolved") : undefined,
       },
       { default: () => identifier || "-" }
@@ -364,7 +364,10 @@ const allColumnConfigs: ColumnConfig[] = [
   {
     key: "key_value",
     title: t("logs.keyIdentifier"),
-    width: 200,
+    // Wide enough for a mask plus its fingerprint discriminator
+    // (sk-p****9z7q#e2b0d7d72d76) without truncating the part an operator
+    // compares against key management.
+    width: 280,
     defaultVisible: true,
     render: renderKeyIdentifier,
   },

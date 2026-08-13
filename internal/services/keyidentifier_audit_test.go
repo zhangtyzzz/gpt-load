@@ -52,7 +52,7 @@ func TestAuditMaskCollisionIsDistinguishable(t *testing.T) {
 	fmt.Println(" Mask collision: two keys sharing first four and last four characters")
 	fmt.Println("================================================================================")
 	fmt.Printf("%-26s  %-14s  %s\n", "COMPLETE KEY", "BARE MASK", "LOG COLUMN SHOWS")
-	fmt.Println(strings.Repeat("-", 78))
+	fmt.Println(strings.Repeat("-", 84))
 	fmt.Printf("%-26s  %-14s  %s\n", keyOne, utils.MaskKeyIdentifier(keyOne), identifiers[hashOne])
 	fmt.Printf("%-26s  %-14s  %s\n", keyTwo, utils.MaskKeyIdentifier(keyTwo), identifiers[hashTwo])
 
@@ -76,8 +76,8 @@ func TestAuditMaskCollisionIsDistinguishable(t *testing.T) {
 
 	// Searching the displayed value must return only that key's rows.
 	fmt.Println()
-	fmt.Printf("%-30s  %-24s  %-5s  %s\n", "SEARCH INPUT", "KIND", "ROWS", "WHICH")
-	fmt.Println(strings.Repeat("-", 84))
+	fmt.Printf("%-30s  %-26s  %-5s  %s\n", "SEARCH INPUT", "KIND", "ROWS", "WHICH")
+	fmt.Println(strings.Repeat("-", 92))
 
 	searchCases := []struct {
 		input string
@@ -106,7 +106,7 @@ func TestAuditMaskCollisionIsDistinguishable(t *testing.T) {
 			t.Errorf("search %q (%s) returned %d rows, want %d",
 				searchCase.input, searchCase.kind, len(rows), searchCase.want)
 		}
-		fmt.Printf("%-30s  %-24s  %-5d  %s%s\n",
+		fmt.Printf("%-30s  %-26s  %-5d  %s%s\n",
 			searchCase.input, searchCase.kind, len(rows), strings.Join(which, ","), verdict)
 	}
 
@@ -115,6 +115,74 @@ func TestAuditMaskCollisionIsDistinguishable(t *testing.T) {
 	fmt.Println("intentionally still accepted and returns both, since a mask alone genuinely")
 	fmt.Println("cannot pick one -- but it is no longer what the column shows.")
 	fmt.Println()
+}
+
+// TestAuditBareMaskScanReachesBeyondFirstBatch is a regression test for a real
+// bug found by measuring at scale: resolveMaskedKeyHashes iterates api_keys with
+// FindInBatches, which paginates by primary key. With the primary key left out of
+// the Select the iteration stopped after the first batch, so a bare-mask search
+// silently considered only the first chunkSize (500) keys.
+//
+// The fixture deliberately straddles that boundary: more keys than one batch,
+// fewer than maskSearchKeyLimit, so a truncated scan is visible as a wrong count
+// rather than hidden behind the cap.
+func TestAuditBareMaskScanReachesBeyondFirstBatch(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := database.AutoMigrate(&models.APIKey{}, &models.RequestLog{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	enc, err := encryption.NewService("batch-boundary-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+
+	const keyCount = 600 // > chunkSize (500), < maskSearchKeyLimit (1000)
+	apiKeys := make([]models.APIKey, 0, keyCount)
+	logRows := make([]models.RequestLog, 0, keyCount)
+	var sampleKey string
+	for index := range keyCount {
+		plaintext := fmt.Sprintf("sk-b%013d7x2m", index)
+		ciphertext, err := enc.Encrypt(plaintext)
+		if err != nil {
+			t.Fatalf("encrypt key: %v", err)
+		}
+		keyHash := enc.Hash(plaintext)
+		apiKeys = append(apiKeys, models.APIKey{
+			KeyValue: ciphertext,
+			KeyHash:  keyHash,
+			GroupID:  1,
+			Status:   models.KeyStatusActive,
+		})
+		logRows = append(logRows, models.RequestLog{
+			ID:         fmt.Sprintf("batch-%04d", index),
+			KeyHash:    keyHash,
+			StatusCode: 400,
+		})
+		sampleKey = plaintext
+	}
+	if err := database.CreateInBatches(apiKeys, 300).Error; err != nil {
+		t.Fatalf("insert api keys: %v", err)
+	}
+	if err := database.CreateInBatches(logRows, 300).Error; err != nil {
+		t.Fatalf("insert request logs: %v", err)
+	}
+
+	service := NewLogService(database, enc)
+	var count int64
+	if err := service.GetLogsQuery(LogFilter{KeyValue: utils.MaskKeyIdentifier(sampleKey)}).
+		Count(&count).Error; err != nil {
+		t.Fatalf("bare mask search: %v", err)
+	}
+
+	fmt.Printf("\nBare-mask scan across %d same-mask keys (chunkSize=500): matched %d rows\n\n",
+		keyCount, count)
+
+	if count != keyCount {
+		t.Fatalf("bare mask matched %d rows, want %d; the scan stopped early", count, keyCount)
+	}
 }
 
 // TestAuditKeyLifecycleNeverMisattributes walks the three states a log row's key
@@ -239,8 +307,8 @@ func TestAuditKeyLifecycleNeverMisattributes(t *testing.T) {
 	fmt.Println("================================================================================")
 	fmt.Println(" Key lifecycle: what the identifier column shows in each state")
 	fmt.Println("================================================================================")
-	fmt.Printf("%-22s  %-26s  %-21s  %s\n", "LOG ROW", "KEY STATE", "COLUMN SHOWS", "KIND")
-	fmt.Println(strings.Repeat("-", 96))
+	fmt.Printf("%-22s  %-28s  %-27s  %s\n", "LOG ROW", "KEY STATE", "COLUMN SHOWS", "KIND")
+	fmt.Println(strings.Repeat("-", 104))
 
 	expectations := map[string]struct {
 		state    string
@@ -267,7 +335,7 @@ func TestAuditKeyLifecycleNeverMisattributes(t *testing.T) {
 		if isMask {
 			kind = "masked identifier"
 		}
-		fmt.Printf("%-22s  %-26s  %-21s  %s\n", row.ID, expectation.state, identifier, kind)
+		fmt.Printf("%-22s  %-28s  %-27s  %s\n", row.ID, expectation.state, identifier, kind)
 
 		if isMask != expectation.resolves {
 			t.Errorf("row %s resolved=%t, want %t (shows %q)", row.ID, isMask, expectation.resolves, identifier)
@@ -297,8 +365,8 @@ func TestAuditKeyLifecycleNeverMisattributes(t *testing.T) {
 	// Searching a live key's current identifier must return exactly the rows that
 	// carry its current hash: post-rotation rows only.
 	fmt.Println()
-	fmt.Printf("%-30s  %-24s  %-5s  %s\n", "SEARCH INPUT", "KIND", "ROWS", "WHICH")
-	fmt.Println(strings.Repeat("-", 84))
+	fmt.Printf("%-30s  %-26s  %-5s  %s\n", "SEARCH INPUT", "KIND", "ROWS", "WHICH")
+	fmt.Println(strings.Repeat("-", 92))
 
 	survivorHashAfter := newEnc.Hash(survivorKey)
 	rotatedHashAfterCheck := newEnc.Hash(rotatedKey)
@@ -393,7 +461,7 @@ func TestAuditEncryptionKeyRemovedWithoutMigrationStaysConsistent(t *testing.T) 
 	fmt.Println(" Misconfiguration: ENCRYPTION_KEY removed without running the key migration")
 	fmt.Println("================================================================================")
 	fmt.Printf("%-18s  %-14s  %s\n", "LOG ROW", "KEY MGMT SHOWS", "LOG COLUMN SHOWS")
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(strings.Repeat("-", 76))
 	for _, pair := range []struct{ row, hash string }{{"misconfig-one", hashOne}, {"misconfig-two", hashTwo}} {
 		fmt.Printf("%-18s  %-14s  %s\n", pair.row, keyManagement[pair.hash], resolved[pair.hash])
 

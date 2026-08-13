@@ -110,8 +110,8 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 	fmt.Println("=========================================================================")
 	fmt.Println(" PART 1  Key management  vs  request-log identifier")
 	fmt.Println("=========================================================================")
-	fmt.Printf("%-16s  %-14s  %-19s  %-8s\n", "LOG ROW", "KEY MGMT SHOWS", "LOG COLUMN", "MASK MATCHES?")
-	fmt.Println(strings.Repeat("-", 78))
+	fmt.Printf("%-16s  %-14s  %-27s  %-8s\n", "LOG ROW", "KEY MGMT SHOWS", "LOG COLUMN", "MASK MATCHES?")
+	fmt.Println(strings.Repeat("-", 86))
 
 	var logs []models.RequestLog
 	if err := database.Order("id asc").Find(&logs).Error; err != nil {
@@ -162,7 +162,7 @@ func TestVerifyLogKeyIdentifierMatchesKeyManagement(t *testing.T) {
 		if !matches {
 			verdict = "NO"
 		}
-		fmt.Printf("%-16s  %-14s  %-19s  %-8s\n", logRow.ID, expected, identifier, verdict)
+		fmt.Printf("%-16s  %-14s  %-27s  %-8s\n", logRow.ID, expected, identifier, verdict)
 		if !matches {
 			t.Errorf("log row %s shows %q which does not begin with key management's %q",
 				logRow.ID, identifier, expected)

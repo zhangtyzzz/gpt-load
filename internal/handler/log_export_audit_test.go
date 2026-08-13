@@ -140,8 +140,8 @@ func TestExportBytesMatchPageDisplay(t *testing.T) {
 	}
 
 	fmt.Println()
-	fmt.Printf("%-22s  %-22s  %-8s\n", "EXPORT key_identifier", "PAGE key_value", "SAME?")
-	fmt.Println(strings.Repeat("-", 58))
+	fmt.Printf("%-27s  %-27s  %-8s\n", "EXPORT key_identifier", "PAGE key_value", "SAME?")
+	fmt.Println(strings.Repeat("-", 68))
 
 	matched := 0
 	for _, record := range records[1:] {
@@ -158,7 +158,7 @@ func TestExportBytesMatchPageDisplay(t *testing.T) {
 			t.Errorf("export shows %q but the page shows %q for %s",
 				exportIdentifier, pageIdentifier, fingerprint)
 		}
-		fmt.Printf("%-22s  %-22s  %-8s\n", exportIdentifier, pageIdentifier, verdict)
+		fmt.Printf("%-27s  %-27s  %-8s\n", exportIdentifier, pageIdentifier, verdict)
 	}
 	if matched != len(keys)+1 {
 		t.Fatalf("cross-checked %d export rows, want %d", matched, len(keys)+1)

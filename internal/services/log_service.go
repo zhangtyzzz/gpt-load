@@ -142,7 +142,10 @@ func (s *LogService) resolveMaskedKeyHashes(head, tail, hashPrefix string) []str
 	hashes := make([]string, 0, 1)
 	seen := make(map[string]struct{})
 
-	query := s.DB.Model(&models.APIKey{}).Select("key_hash", "key_value")
+	// The primary key must be selected: FindInBatches paginates by it, and without
+	// it the iteration stops after the first batch, silently scanning only
+	// chunkSize keys.
+	query := s.DB.Model(&models.APIKey{}).Select("id", "key_hash", "key_value")
 	if hashPrefix != "" {
 		query = query.Where("key_hash LIKE ?", hashPrefix+"%")
 	}

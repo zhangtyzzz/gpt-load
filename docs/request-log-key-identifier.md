@@ -339,7 +339,7 @@ asked for. No existing test asserts the `...` form (verified: no `display.test.t
 > this section stands.
 
 ```
-1. identifier of the live key  e.g. "sk-a****mnop#b91b" (key_hash resolves to an api_keys row)
+1. identifier of the live key  e.g. "sk-a****mnop#b91b0e612994" (key_hash resolves to a live key)
 2. fingerprint                 e.g. "fp:6f9ef8c7ce8d"   (key_hash present, but no live key)
 3. ""                          (no key_hash at all — row logged without a selected key)
 ```
@@ -567,14 +567,14 @@ has been deleted. Actual output (regenerated after the §7.1 fix):
 =========================================================================
 LOG ROW           KEY MGMT SHOWS  LOG COLUMN           MASK MATCHES?
 ------------------------------------------------------------------------------
-log-alpha-bad     sk-p****7d4e    sk-p****7d4e#b91b    yes
-log-alpha-ok      sk-p****7d4e    sk-p****7d4e#b91b    yes
-log-bravo-bad     sk-p****6a2b    sk-p****6a2b#55c1    yes
-log-charlie-ok    sk-a****4b81    sk-a****4b81#77ec    yes
+log-alpha-bad     sk-p****7d4e    sk-p****7d4e#b91b0e612994    yes
+log-alpha-ok      sk-p****7d4e    sk-p****7d4e#b91b0e612994    yes
+log-bravo-bad     sk-p****6a2b    sk-p****6a2b#55c1f6292cf4    yes
+log-charlie-ok    sk-a****4b81    sk-a****4b81#77ec4dce8c08    yes
 
 3 distinct keys -> 3 distinct identifiers (each key is individually recognizable)
 
-One key, two outcomes:  200 row -> "sk-p****7d4e#b91b"   400 row -> "sk-p****7d4e#b91b"
+One key, two outcomes:  200 row -> "sk-p****7d4e#b91b0e612994"   400 row -> "sk-p****7d4e#b91b0e612994"
 
 =========================================================================
  PART 2  Historical row whose key was deleted from key management
@@ -590,7 +590,7 @@ reason         : nothing remains but a one-way hash, so a mask cannot be
 =========================================================================
 SEARCH INPUT                        KIND                                    ROWS
 ----------------------------------------------------------------------------------
-sk-p****7d4e#b91b                   displayed identifier (copied column)    2
+sk-p****7d4e#b91b0e612994           displayed identifier (copied column)    2
 sk-p****7d4e                        bare mask (legacy form)                 2
 sk-proj-alpha-9f3c2b1a7d4e          complete key                            2
 fp:b91b0e612994                     fingerprint                             2
@@ -601,10 +601,10 @@ zzzz****zzzz                        mask matching no key                    0
  PART 4  CSV export
 =========================================================================
 key_identifier,key_fingerprint,group_name,status_code
-sk-p****6a2b#55c1,fp:55c1f6292cf4,primary,400
-sk-a****4b81#77ec,fp:77ec4dce8c08,primary,200
+sk-p****6a2b#55c1f6292cf4,fp:55c1f6292cf4,primary,400
+sk-a****4b81#77ec4dce8c08,fp:77ec4dce8c08,primary,200
 fp:7b1e4a90c3d2,fp:7b1e4a90c3d2,primary,401
-sk-p****7d4e#b91b,fp:b91b0e612994,primary,200
+sk-p****7d4e#b91b0e612994,fp:b91b0e612994,primary,200
 
 =========================================================================
  PART 5  What the request_logs table actually stores
@@ -693,8 +693,8 @@ random in their trailing characters either.
 from the key hash — `utils.KeyIdentifier` in `internal/utils/string_utils.go`:
 
 ```
-sk-p****9z7q#2cbb        (key one)
-sk-p****9z7q#75a3        (key two)
+sk-p****9z7q#2cbb4afc57aa        (key one)
+sk-p****9z7q#75a3ef835247        (key two)
 ```
 
 Properties, all asserted by tests:
@@ -768,7 +768,7 @@ complete key                1     0          1
 LOG ROW                 KEY STATE                       COLUMN SHOWS         KIND
 life-deleted            deleted from key management     fp:e001a49e36c2      fingerprint
 life-historical         never resolvable (hash only)    fp:0f1e2d3c4b5a      fingerprint
-life-rotated-after      live key, post-rotation row     sk-r****6789#eb55    masked identifier
+life-rotated-after      live key, post-rotation row     sk-r****6789#eb55f55967fd    masked identifier
 life-rotated-before     live key, pre-rotation row      fp:72e7d6c7d2dd      fingerprint
 life-survivor           live key, pre-rotation row      fp:948a35d81d86      fingerprint
 ```
@@ -791,8 +791,8 @@ Search after rotation:
 
 ```
 SEARCH INPUT                    KIND                       ROWS   WHICH
-sk-s****ijkl#02d3               survivor, no post-rot row  0
-sk-r****6789#eb55               rotated key, post-rot row  1      life-rotated-after
+sk-s****ijkl#02d3be29e1e0       survivor, no post-rot row  0
+sk-r****6789#eb55f55967fd       rotated key, post-rot row  1      life-rotated-after
 fp:948a35d81d86                 survivor pre-rotation fp   1      life-survivor
 fp:e001a49e36c2                 deleted key fingerprint    1      life-deleted
 fp:0f1e2d3c4b5a                 historical row fingerprint 1      life-historical
@@ -810,8 +810,8 @@ no-op that returns the ciphertext.
 
 ```
 LOG ROW             KEY MGMT SHOWS  LOG COLUMN SHOWS
-misconfig-one       2eed****b725    2eed****b725#9c85
-misconfig-two       3bb8****14f9    3bb8****14f9#ab6c
+misconfig-one       fe10****6d97    fe10****6d97#9c85e386c715
+misconfig-two       975d****87f8    975d****87f8#ab6cce1b29f0
 ```
 
 Verified properties: the two keys stay distinct, no plaintext appears, and the log column still
@@ -830,8 +830,8 @@ exports a masking function, so a second application would corrupt the display.
 `web/src/components/logs/LogTable.test.ts` mounts the real component with a backend-shaped response
 and asserts:
 
-- the cell contains the backend identifier **verbatim** (`sk-l****mnop#b91b`);
-- the double-masked form (`maskKey("sk-l****mnop#b91b")` → `sk-l****b91b`) is **absent**. The test
+- the cell contains the backend identifier **verbatim** (`sk-l****mnop#b91b0e612994`);
+- the double-masked form (`maskKey("sk-l****mnop#b91b0e612994")` → `sk-l****2994`) is **absent**. The test
   first asserts these two strings differ, so it cannot pass vacuously;
 - the key management value for the same key (`maskKey(plaintext)` → `sk-l****mnop`) is an exact
   prefix of the log value, and is present in the rendered output;
@@ -851,18 +851,18 @@ key.
 
 ```
 key_identifier,key_fingerprint,group_name,status_code
-sk-o****ijkl#6c53,fp:6c53b782fb8f,primary,400
+sk-o****ijkl#6c53b782fb8f,fp:6c53b782fb8f,primary,400
 fp:9a8b7c6d5e4f,fp:9a8b7c6d5e4f,primary,401
-sk-p****9z7q#ba3a,fp:ba3a1325aa83,primary,400
-sk-p****9z7q#f16c,fp:f16c39e3b759,primary,400
+sk-p****9z7q#ba3a1325aa83,fp:ba3a1325aa83,primary,400
+sk-p****9z7q#f16c39e3b759,fp:f16c39e3b759,primary,400
 ```
 
 ```
 EXPORT key_identifier   PAGE key_value          SAME?
-sk-o****ijkl#6c53       sk-o****ijkl#6c53       yes
-fp:9a8b7c6d5e4f         fp:9a8b7c6d5e4f         yes
-sk-p****9z7q#ba3a       sk-p****9z7q#ba3a       yes
-sk-p****9z7q#f16c       sk-p****9z7q#f16c       yes
+sk-o****ijkl#6c53b782fb8f    sk-o****ijkl#6c53b782fb8f    yes
+fp:9a8b7c6d5e4f              fp:9a8b7c6d5e4f              yes
+sk-p****9z7q#ba3a1325aa83    sk-p****9z7q#ba3a1325aa83    yes
+sk-p****9z7q#f16c39e3b759    sk-p****9z7q#f16c39e3b759    yes
 ```
 
 Asserted on the bytes: identifier column equals the page value for every row; no complete key
@@ -927,6 +927,163 @@ GOPROXY=off go test ./internal/services/ -v -run TestVerifyLogKeyIdentifierMatch
 
 # Frontend render path (no double masking)
 cd web && npx --no-install vitest run src/components/logs/LogTable.test.ts
+```
+
+---
+
+## 8. Scale audit of the discriminator
+
+§7.1 introduced the discriminator to stop colliding masks from rendering identically. That fix
+answered the mask question but raised its own: the discriminator was four hex characters, so it could
+collide too. This section measures that at the scale §7.1 itself argued was ordinary, and measures
+what happens when the whole displayed value is pasted into the search box.
+
+Two more real defects were found. Both are fixed.
+
+### 8.1 Defect: a four-character discriminator collided at group scale — FIXED
+
+The discriminator was 4 hex characters = 65,536 values. It only has to separate keys that already
+share a mask — but §7.1's own measurement showed a mask group can contain *every key in a group*, so
+that is the population it must survive.
+
+`TestKeyIdentifierUniquenessAtGroupScale` builds 5000 keys that all share the head `sk-p` and the
+tail `9z7q` (verified: exactly one distinct bare mask), then counts how many end up sharing a full
+identifier at three discriminator widths:
+
+```
+HEX WIDTH     DISCRIM. SPACE      DISTINCT      KEYS COLLIDING      EXPECTED PAIRS
+4             65536               4805          386                 190.697
+8             4294967296          5000          0                   0.003
+12            281474976710656     5000          0                   0.000
+```
+
+**386 of 5000 keys shared an identifier with another key** — ~193 colliding pairs, matching the
+birthday prediction of 190.7. So the round-2 fix was insufficient at exactly the scale that motivated
+it: it moved the collision from the mask to the discriminator instead of removing it.
+
+**The fix.** The discriminator is now the full fingerprint body — `keyFingerprintLength` (12) hex
+characters, the same 12 the `fp:` identifier has always published:
+
+```
+sk-p****9z7q#2cbb4afc57aa
+sk-p****9z7q#75a3ef835247
+```
+
+The point of choosing 12 rather than 8 is not the extra headroom, it is that it removes the need for
+a probability argument at all. The identifier now collides *if and only if* the fingerprint collides,
+so it inherits the uniqueness of the identifier this system has always used for exact correlation,
+and contributes no new collision risk of its own. `TestKeyIdentifierCarriesWholeFingerprintBody`
+pins that property directly: the discriminator equals `strings.TrimPrefix(KeyFingerprint(hash),
+"fp:")`.
+
+Eight characters would have left a 0.3% residual at 5000 keys and ~1.2% at 10,000. Choosing it would
+have meant shipping another "unlikely enough" limitation — the same mistake §7.1 corrected.
+
+**Operational reading.** No, an operator cannot now be misled by a discriminator collision, because
+there is no scale at which one occurs before the fingerprint itself collides. Should that ever
+happen, both keys would already be indistinguishable under the pre-existing `fp:` identifier too, so
+it is not a regression introduced here.
+
+**Cost of the change:** the identifier grew from 17 to 25 characters. The log column was widened
+(200→280px, ellipsis 150→230px) so the value is not truncated. Nothing else changed:
+`ParseKeyIdentifier` accepts any suffix from 4 to 12 hex characters, so a truncated paste still
+narrows the search instead of failing.
+
+### 8.2 Defect: the bare-mask scan silently stopped after one batch — FIXED
+
+Found by running the paste-search test at 2000 keys. Searching the bare mask returned **500 rows** —
+exactly `chunkSize`.
+
+Cause: `resolveMaskedKeyHashes` iterates `api_keys` with `FindInBatches`, which paginates by primary
+key. The query selected only `key_hash` and `key_value`, so GORM had no primary key to page on and
+the iteration stopped after the first batch. Every bare-mask search therefore considered only the
+first 500 keys and silently under-reported.
+
+Round 2's measurement used 400 keys — under the batch size — so it could not see this. That is the
+concrete reason this round's instruction to test at real scale mattered.
+
+Fix: select the primary key as well (`Select("id", "key_hash", "key_value")`).
+`TestAuditBareMaskScanReachesBeyondFirstBatch` is the regression test, deliberately sized at 600 keys
+— above `chunkSize` (500) and below `maskSearchKeyLimit` (1000) — so a truncated scan shows up as a
+wrong count rather than being masked by the cap:
+
+```
+Bare-mask scan across 600 same-mask keys (chunkSize=500): matched 600 rows
+```
+
+### 8.3 Pasting the whole displayed value into the search box
+
+`TestSearchByPastedIdentifierAtScale` drives `POST /logs/search` — the endpoint the frontend actually
+uses (`web/src/api/logs.ts:7-9`) — with 2000 keys that all share one bare mask. The displayed value
+is read back *from the API* rather than recomputed, so the input is exactly what an operator would
+copy.
+
+```
+POST /logs/search with 2000 keys that all share the bare mask "sk-p****9z7q"
+displayed column value for the target row: sk-p****9z7q#e2b0d7d72d76
+
+SEARCH INPUT (as pasted)        KIND                      ROWS     MATCHED ROW
+sk-p****9z7q#e2b0d7d72d76       pasted column value       1        paste-1000
+ sk-p****9z7q#e2b0d7d72d76      pasted with whitespace    1        paste-1000
+sk-p****9z7q                    bare mask only (capped)   1000     paste-0921
+fp:e2b0d7d72d76                 fingerprint               1        paste-1000
+sk-p00000000010009z7q           complete key              1        paste-1000
+```
+
+**The pasted value works and is exact**: one row out of 2000 sharing the mask, and it is the right
+row. Leading and trailing whitespace is tolerated, which matters because copying from a table often
+picks it up.
+
+Supporting checks:
+
+- The frontend passes the pasted string through unmodified. `LogTable.test.ts` sets the value on the
+  key-search input, triggers the search, and asserts the exact string — `#` suffix included — arrives
+  at `logApi.getLogs`. Without that suffix the search would silently widen to every key with the same
+  mask, so it is asserted explicitly rather than assumed.
+- The bare mask is capped at `maskSearchKeyLimit` (1000 of 2000 here) and logs a warning. This is the
+  designed bound on the `IN` clause, it applies only to a form the column no longer shows, and it is
+  reported rather than silent.
+- `GET /logs?key_value=<identifier>` returns **400**, and the rejection does not echo the value.
+  That endpoint accepts fingerprints only, by design — which is the right behaviour here for a reason
+  worth recording: `#` starts a URL fragment, so an identifier in a query string would arrive with
+  the discriminator stripped and would silently widen to the bare mask. Rejecting it avoids that
+  class of bug entirely. The UI is unaffected because it searches over POST.
+
+### 8.4 Test suite comparison for this pass
+
+| Suite | Round-1 baseline (§2) | After round 3 | Delta |
+|---|---|---|---|
+| Go (`go test -count=1 ./...`) | all pass | all pass | no new failures; 14 packages ok |
+| Frontend (`vitest run`) | 16 files / 66 tests | 18 files / 78 tests | +2 files, +12 tests (all new) |
+
+Difference set against the original baseline: **empty**. No pre-existing repository test failed, was
+modified, skipped, or weakened in any of the three passes.
+
+Tests adjusted in this pass were all mine, and all because the discriminator width changed — they
+assert against `utils.KeyIdentifier` rather than hard-coded strings, so most needed no change at all:
+
+- `TestParseKeyIdentifierAcceptsDiscriminatedIdentifier` — now uses a full-width suffix.
+- `TestParseKeyIdentifierRejectsCompleteKeysAndOtherIdentifiers` — "too long" case updated, since a
+  5-character suffix is now legitimately accepted as a truncated prefix.
+- `TestParseKeyIdentifierAcceptsTruncatedDiscriminator` — new, covering the 4..12 range.
+- `LogTable.test.ts` fixtures use full-width identifiers.
+
+Also clean: `go build ./...`, `go vet ./internal/...`, `gofmt -l` on all changed Go files,
+`eslint .`, `prettier --check src/`, and `vue-tsc --noEmit`.
+
+### 8.5 Re-running the scale audit
+
+```bash
+cd repos/gpt-load
+
+# Discriminator uniqueness at 5000 same-mask keys, across widths
+GOPROXY=off go test ./internal/utils/ -v -run 'TestKeyIdentifier'
+
+# Pasted-identifier search at 2000 same-mask keys, through POST /logs/search
+GOPROXY=off go test ./internal/handler/ -v -run TestSearchByPastedIdentifierAtScale
+
+# Bare-mask scan across the batch boundary
+GOPROXY=off go test ./internal/services/ -v -run TestAuditBareMaskScanReachesBeyondFirstBatch
 ```
 
 

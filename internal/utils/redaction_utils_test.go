@@ -151,7 +151,7 @@ func TestParseKeyIdentifierAcceptsMaskedIdentifier(t *testing.T) {
 }
 
 func TestParseKeyIdentifierAcceptsDiscriminatedIdentifier(t *testing.T) {
-	head, tail, hashPrefix, ok := ParseKeyIdentifier(" sk-a****mnop#B91B ")
+	head, tail, hashPrefix, ok := ParseKeyIdentifier(" sk-a****mnop#B91B0E612994 ")
 	if !ok {
 		t.Fatalf("ParseKeyIdentifier() rejected a discriminated identifier")
 	}
@@ -159,8 +159,22 @@ func TestParseKeyIdentifierAcceptsDiscriminatedIdentifier(t *testing.T) {
 		t.Fatalf("ParseKeyIdentifier() mask = %q/%q, want sk-a/mnop", head, tail)
 	}
 	// Hex digests are stored lower-case, so the suffix is normalized.
-	if hashPrefix != "b91b" {
-		t.Fatalf("hash prefix = %q, want %q", hashPrefix, "b91b")
+	if hashPrefix != "b91b0e612994" {
+		t.Fatalf("hash prefix = %q, want %q", hashPrefix, "b91b0e612994")
+	}
+}
+
+func TestParseKeyIdentifierAcceptsTruncatedDiscriminator(t *testing.T) {
+	// A shortened paste should still narrow the search rather than fail outright.
+	for _, suffix := range []string{"b91b", "b91b0e", "b91b0e6129"} {
+		_, _, hashPrefix, ok := ParseKeyIdentifier("sk-a****mnop#" + suffix)
+		if !ok {
+			t.Errorf("ParseKeyIdentifier() rejected truncated discriminator %q", suffix)
+			continue
+		}
+		if hashPrefix != suffix {
+			t.Errorf("hash prefix = %q, want %q", hashPrefix, suffix)
+		}
 	}
 }
 
@@ -171,17 +185,17 @@ func TestParseKeyIdentifierRejectsCompleteKeysAndOtherIdentifiers(t *testing.T) 
 		"",
 		"sk-a-complete-upstream-key-value",
 		"fp:abcdef012345",
-		MaskKeyIdentifier("short"), // the bare marker carries no head or tail
-		"sk-a***mnop",              // three stars
-		"sk-a*****mno",             // five stars
-		"sk-a****mno",              // too short overall
-		"sk-a****mnopq",            // too long overall
-		"sk**a****mnop",            // marker at the wrong offset
-		"sk-a****mnop#",            // empty discriminator
-		"sk-a****mnop#b91",         // discriminator too short
-		"sk-a****mnop#b91bb",       // discriminator too long
-		"sk-a****mnop#b91z",        // discriminator not hex
-		"sk-a****mnop#b91b#c0de",   // two discriminators
+		MaskKeyIdentifier("short"),   // the bare marker carries no head or tail
+		"sk-a***mnop",                // three stars
+		"sk-a*****mno",               // five stars
+		"sk-a****mno",                // too short overall
+		"sk-a****mnopq",              // too long overall
+		"sk**a****mnop",              // marker at the wrong offset
+		"sk-a****mnop#",              // empty discriminator
+		"sk-a****mnop#b91",           // discriminator below the minimum width
+		"sk-a****mnop#b91b0e6129945", // discriminator wider than a fingerprint body
+		"sk-a****mnop#b91z",          // discriminator not hex
+		"sk-a****mnop#b91b#c0de",     // two discriminators
 	}
 	for _, value := range invalid {
 		if head, tail, hashPrefix, ok := ParseKeyIdentifier(value); ok {

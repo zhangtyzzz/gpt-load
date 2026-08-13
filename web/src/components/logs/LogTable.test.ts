@@ -29,7 +29,7 @@ import LogTable from "./LogTable.vue";
 
 // Shaped exactly like a backend response: the identifier is already resolved and
 // masked server-side by utils.KeyIdentifier.
-const BACKEND_IDENTIFIER = "sk-l****mnop#b91b";
+const BACKEND_IDENTIFIER = "sk-l****mnop#b91b0e612994";
 const BACKEND_FINGERPRINT = "fp:b91b0e612994";
 const PLAINTEXT_KEY = "sk-live-abcdefghijklmnop";
 
@@ -130,8 +130,8 @@ describe("log key identifier rendering", () => {
   });
 
   it("keeps colliding masks distinguishable in the list", async () => {
-    const first = "sk-p****9z7q#2cbb";
-    const second = "sk-p****9z7q#75a3";
+    const first = "sk-p****9z7q#2cbb4afc57aa";
+    const second = "sk-p****9z7q#75a31be09cd2";
     const wrapper = mountWithRows([
       logRow({ id: "row-a", key_value: first, key_fingerprint: "fp:2cbb4afc57aa" }),
       logRow({ id: "row-b", key_value: second, key_fingerprint: "fp:75a31be09cd2" }),
@@ -142,5 +142,28 @@ describe("log key identifier rendering", () => {
     expect(text).toContain(first);
     expect(text).toContain(second);
     expect(first).not.toBe(second);
+  });
+
+  it("sends the pasted identifier to the search API unmodified", async () => {
+    // An operator copies the whole column value, discriminator included. It has to
+    // reach the backend intact: the discriminator is what makes the search land on
+    // one key rather than every key sharing the mask.
+    const wrapper = mountWithRows([logRow()]);
+    await flushPromises();
+
+    // The i18n mock returns the message key, so the placeholder identifies the
+    // key-search box among the filter inputs.
+    const input = wrapper.find('input[placeholder="logs.keySearchPlaceholder"]');
+    expect(input.exists()).toBe(true);
+    await input.setValue(BACKEND_IDENTIFIER);
+    await input.trigger("keyup.enter");
+    await flushPromises();
+
+    const lastCall = getLogs.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    expect(lastCall?.[0].key_value).toBe(BACKEND_IDENTIFIER);
+    // Specifically, the "#…" part must survive; without it the search widens to
+    // every key with the same mask.
+    expect(lastCall?.[0].key_value).toContain("#");
   });
 });
