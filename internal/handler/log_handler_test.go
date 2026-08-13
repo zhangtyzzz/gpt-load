@@ -224,3 +224,90 @@ func TestGetLogsCompatibilityEndpointAcceptsFingerprint(t *testing.T) {
 		t.Fatalf("GET fingerprint response leaked key hash: %s", recorder.Body.String())
 	}
 }
+
+// TestGetLogsReturnsMaskedIdentifierForLiveKey covers the reporter's requirement
+// directly: a log row for a key that still exists in key management must render
+// as that key's mask, not as an opaque fingerprint.
+func TestGetLogsReturnsMaskedIdentifierForLiveKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	if err := i18n.Init(); err != nil {
+		t.Fatalf("initialize i18n: %v", err)
+	}
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := database.AutoMigrate(&models.RequestLog{}, &models.APIKey{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+
+	enc, err := encryption.NewService("handler-test-encryption-key")
+	if err != nil {
+		t.Fatalf("create encryption service: %v", err)
+	}
+
+	const liveKey = "sk-live-abcdefghijklmnop"
+	encrypted, err := enc.Encrypt(liveKey)
+	if err != nil {
+		t.Fatalf("encrypt key: %v", err)
+	}
+	liveHash := enc.Hash(liveKey)
+	if err := database.Create(&models.APIKey{
+		KeyValue: encrypted,
+		KeyHash:  liveHash,
+		GroupID:  1,
+		Status:   models.KeyStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("insert api key: %v", err)
+	}
+	if err := database.Create(&models.RequestLog{
+		ID:         "live-key-log",
+		KeyHash:    liveHash,
+		StatusCode: 400,
+	}).Error; err != nil {
+		t.Fatalf("insert request log: %v", err)
+	}
+
+	// A historical row whose key is gone must still render, as a fingerprint.
+	const orphanHash = "fedcba9876543210fedcba9876543210"
+	if err := database.Create(&models.RequestLog{
+		ID:         "orphan-key-log",
+		KeyHash:    orphanHash,
+		StatusCode: 500,
+	}).Error; err != nil {
+		t.Fatalf("insert orphan request log: %v", err)
+	}
+
+	server := &Server{LogService: services.NewLogService(database, enc), EncryptionSvc: enc}
+	router := gin.New()
+	router.GET("/logs", server.GetLogs)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/logs", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+
+	// The mask must equal what key management shows for the same key.
+	mask := utils.MaskKeyIdentifier(liveKey)
+	if !strings.Contains(body, mask) {
+		t.Fatalf("log API omitted the masked identifier %q: %s", mask, body)
+	}
+	// The unique fingerprint stays available for exact search.
+	if !strings.Contains(body, utils.KeyFingerprint(liveHash)) {
+		t.Fatalf("log API omitted the key fingerprint: %s", body)
+	}
+	// The historical row falls back rather than disappearing or fabricating a mask.
+	if !strings.Contains(body, utils.KeyFingerprint(orphanHash)) {
+		t.Fatalf("log API omitted the historical row fingerprint: %s", body)
+	}
+	// Neither the complete key nor internal hashes may be serialized.
+	if strings.Contains(body, liveKey) {
+		t.Fatalf("log API leaked the complete key: %s", body)
+	}
+	if strings.Contains(body, liveHash) || strings.Contains(body, orphanHash) ||
+		strings.Contains(body, `"key_hash"`) {
+		t.Fatalf("log API leaked internal key hash: %s", body)
+	}
+}

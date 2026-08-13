@@ -2,7 +2,7 @@ name: Build Docker Image
 
 env:
   # Update during each stable release review so upgrade smoke follows the supported baseline.
-  PREVIOUS_STABLE_TAG: v1.5.1
+  PREVIOUS_STABLE_TAG: v1.6.2
 
 on:
   push:

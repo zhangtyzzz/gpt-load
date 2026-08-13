@@ -44,15 +44,31 @@ export function getGroupDisplayName(item: Group | SubGroupInfo): string {
 }
 
 /**
+ * The separator used between the retained head and tail of a masked key.
+ * Must stay in sync with utils.KeyMaskMarker in the Go backend: the request-log
+ * key identifier is masked server-side, and the two screens are only comparable
+ * if both render the same shape.
+ */
+export const KEY_MASK_MARKER = "****";
+
+/**
  * Masks a long key string for display.
+ *
+ * Mirrors utils.MaskKeyIdentifier in the Go backend exactly: the first four and
+ * last four characters are kept, and a key too short for that window is reduced
+ * to the marker alone rather than shown in full.
+ *
  * @param key The key string.
  * @returns The masked key.
  */
 export function maskKey(key: string): string {
-  if (!key || key.length <= 8) {
-    return key || "";
+  if (!key) {
+    return "";
   }
-  return `${key.substring(0, 4)}...${key.substring(key.length - 4)}`;
+  if (key.length <= 8) {
+    return KEY_MASK_MARKER;
+  }
+  return `${key.substring(0, 4)}${KEY_MASK_MARKER}${key.substring(key.length - 4)}`;
 }
 
 /**

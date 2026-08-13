@@ -137,6 +137,126 @@ func TestParseKeyFingerprint(t *testing.T) {
 	}
 }
 
+func TestParseKeyIdentifierAcceptsMaskedIdentifier(t *testing.T) {
+	head, tail, hashPrefix, ok := ParseKeyIdentifier(" sk-a****mnop ")
+	if !ok {
+		t.Fatalf("ParseKeyIdentifier() rejected a well-formed mask")
+	}
+	if head != "sk-a" || tail != "mnop" {
+		t.Fatalf("ParseKeyIdentifier() = %q, %q, want %q, %q", head, tail, "sk-a", "mnop")
+	}
+	if hashPrefix != "" {
+		t.Fatalf("bare mask yielded hash prefix %q, want none", hashPrefix)
+	}
+}
+
+func TestParseKeyIdentifierAcceptsDiscriminatedIdentifier(t *testing.T) {
+	head, tail, hashPrefix, ok := ParseKeyIdentifier(" sk-a****mnop#B91B0E612994 ")
+	if !ok {
+		t.Fatalf("ParseKeyIdentifier() rejected a discriminated identifier")
+	}
+	if head != "sk-a" || tail != "mnop" {
+		t.Fatalf("ParseKeyIdentifier() mask = %q/%q, want sk-a/mnop", head, tail)
+	}
+	// Hex digests are stored lower-case, so the suffix is normalized.
+	if hashPrefix != "b91b0e612994" {
+		t.Fatalf("hash prefix = %q, want %q", hashPrefix, "b91b0e612994")
+	}
+}
+
+func TestParseKeyIdentifierAcceptsTruncatedDiscriminator(t *testing.T) {
+	// A shortened paste should still narrow the search rather than fail outright.
+	for _, suffix := range []string{"b91b", "b91b0e", "b91b0e6129"} {
+		_, _, hashPrefix, ok := ParseKeyIdentifier("sk-a****mnop#" + suffix)
+		if !ok {
+			t.Errorf("ParseKeyIdentifier() rejected truncated discriminator %q", suffix)
+			continue
+		}
+		if hashPrefix != suffix {
+			t.Errorf("hash prefix = %q, want %q", hashPrefix, suffix)
+		}
+	}
+}
+
+func TestParseKeyIdentifierRejectsCompleteKeysAndOtherIdentifiers(t *testing.T) {
+	// A complete key must never be diverted into masked-key resolution: it has to
+	// reach the exact-hash lookup instead.
+	invalid := []string{
+		"",
+		"sk-a-complete-upstream-key-value",
+		"fp:abcdef012345",
+		MaskKeyIdentifier("short"),   // the bare marker carries no head or tail
+		"sk-a***mnop",                // three stars
+		"sk-a*****mno",               // five stars
+		"sk-a****mno",                // too short overall
+		"sk-a****mnopq",              // too long overall
+		"sk**a****mnop",              // marker at the wrong offset
+		"sk-a****mnop#",              // empty discriminator
+		"sk-a****mnop#b91",           // discriminator below the minimum width
+		"sk-a****mnop#b91b0e6129945", // discriminator wider than a fingerprint body
+		"sk-a****mnop#b91z",          // discriminator not hex
+		"sk-a****mnop#b91b#c0de",     // two discriminators
+	}
+	for _, value := range invalid {
+		if head, tail, hashPrefix, ok := ParseKeyIdentifier(value); ok {
+			t.Errorf("ParseKeyIdentifier(%q) accepted invalid identifier as %q/%q/%q",
+				value, head, tail, hashPrefix)
+		}
+	}
+}
+
+func TestParseKeyIdentifierRoundTripsKeyIdentifier(t *testing.T) {
+	const key = "sk-abcdefghijklmnop"
+	const keyHash = "b91b0e6129940123456789abcdef0123"
+
+	identifier := KeyIdentifier(key, keyHash)
+	head, tail, hashPrefix, ok := ParseKeyIdentifier(identifier)
+	if !ok {
+		t.Fatalf("ParseKeyIdentifier() rejected KeyIdentifier() output %q", identifier)
+	}
+	if !KeyMatchesMask(key, head, tail) {
+		t.Fatalf("KeyMatchesMask() rejected the key its own identifier was built from")
+	}
+	if !strings.HasPrefix(keyHash, hashPrefix) {
+		t.Fatalf("hash prefix %q is not a prefix of %q", hashPrefix, keyHash)
+	}
+}
+
+func TestParseKeyIdentifierRoundTripsBareMaskForBackwardCompatibility(t *testing.T) {
+	// An identifier copied from a build that displayed the bare mask must still
+	// resolve, just without the narrowing suffix.
+	const key = "sk-abcdefghijklmnop"
+	head, tail, hashPrefix, ok := ParseKeyIdentifier(MaskKeyIdentifier(key))
+	if !ok {
+		t.Fatalf("ParseKeyIdentifier() rejected MaskKeyIdentifier(%q)", key)
+	}
+	if hashPrefix != "" {
+		t.Fatalf("bare mask yielded hash prefix %q, want none", hashPrefix)
+	}
+	if !KeyMatchesMask(key, head, tail) {
+		t.Fatalf("KeyMatchesMask() rejected the key its own mask was built from")
+	}
+}
+
+func TestKeyMatchesMaskDistinguishesKeys(t *testing.T) {
+	head, tail, _, ok := ParseKeyIdentifier(MaskKeyIdentifier("sk-alpha-key-value-1111"))
+	if !ok {
+		t.Fatalf("ParseKeyIdentifier() rejected a generated mask")
+	}
+
+	if !KeyMatchesMask("sk-alpha-key-value-1111", head, tail) {
+		t.Errorf("KeyMatchesMask() rejected the originating key")
+	}
+	// Shares the head but not the tail.
+	if KeyMatchesMask("sk-alpha-key-value-2222", head, tail) {
+		t.Errorf("KeyMatchesMask() matched a key with a different tail")
+	}
+	// A key short enough to have no real head/tail window must never match.
+	if KeyMatchesMask("sk-11111", head, tail) {
+		t.Errorf("KeyMatchesMask() matched a short key")
+	}
+}
+
 func TestIsSensitiveNameCoversCommonNormalizedCredentialNames(t *testing.T) {
 	for _, name := range []string{
 		"AUTH_KEY",

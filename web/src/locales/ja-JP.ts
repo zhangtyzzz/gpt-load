@@ -694,8 +694,12 @@ export default {
     basicInfo: "基本情報",
     key: "キー",
     keyIdentifier: "キー識別子",
-    keySearchPlaceholder: "完全なキーまたはキー識別子で検索",
+    keySearchPlaceholder: "完全なキー、マスク、またはキーフィンガープリントで検索",
     copyKeyIdentifier: "キー識別子をコピー",
+    keyFingerprint: "キーフィンガープリント",
+    copyKeyFingerprint: "キーフィンガープリントをコピー",
+    keyIdentifierUnresolved:
+      "このキーはキー管理に存在しないため、フィンガープリントのみを表示しています",
     group: "グループ",
     requestId: "リクエストID",
     requestTime: "リクエスト時間",
