@@ -159,7 +159,8 @@ describe("log key identifier rendering", () => {
     await input.trigger("keyup.enter");
     await flushPromises();
 
-    const lastCall = getLogs.mock.calls.at(-1);
+    const calls = getLogs.mock.calls;
+    const lastCall = calls[calls.length - 1];
     expect(lastCall).toBeDefined();
     expect(lastCall?.[0].key_value).toBe(BACKEND_IDENTIFIER);
     // Specifically, the "#…" part must survive; without it the search widens to
