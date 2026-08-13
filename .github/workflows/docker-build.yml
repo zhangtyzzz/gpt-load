@@ -399,7 +399,7 @@ jobs:
             -H "Authorization: Bearer ${AUTH_KEY}" \
             "http://127.0.0.1:${upgrade_port}/api/groups")"
           if [[ "$groups_response" != *"\"name\":\"${group_name}\""* ]]; then
-            echo "::error::Upgrade smoke test lost the v1.5.1 fixture group"
+            echo "::error::Upgrade smoke test lost the previous-stable fixture group"
             exit 1
           fi
 
@@ -601,9 +601,14 @@ jobs:
             echo "::error::Request logs were not durably flushed across restart"
             exit 1
           fi
-          if ! jq -e '.data.items | all(.[]; (.key_value | test("^fp:[0-9a-f]{12}$")))' \
+          if ! jq -e '.data.items | all(.[]; (.key_value | test("^([^*#]{1,8}[*]{4}[^*#]{1,8}|[^*#]{1,8})#[0-9a-f]{12}$")))' \
             <<<"$logs_response" >/dev/null; then
-            echo "::error::Request-log API exposed a value other than a short fingerprint"
+            echo "::error::Request-log API exposed a value other than a masked key identifier"
+            exit 1
+          fi
+          if jq -e '.data.items | any(.[]; (.key_value | test("sk-[A-Za-z0-9_-]{12,}")))' \
+            <<<"$logs_response" >/dev/null; then
+            echo "::error::Request-log API exposed something long enough to be a whole key"
             exit 1
           fi
           if jq -e '.. | objects | select(has("key_hash"))' <<<"$logs_response" >/dev/null; then
