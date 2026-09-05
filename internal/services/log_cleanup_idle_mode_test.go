@@ -17,6 +17,15 @@ func TestActivityDrivenLogCleanupWaitsForRealTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	// SQLite creates a separate in-memory database for every connection. Keep
+	// this concurrent service test on one connection so the cleanup goroutine
+	// cannot observe a fresh database without the migrated tables.
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := database.AutoMigrate(&models.RequestLog{}); err != nil {
 		t.Fatalf("migrate request logs: %v", err)
 	}
