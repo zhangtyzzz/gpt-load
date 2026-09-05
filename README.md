@@ -237,6 +237,11 @@ database-free, so container health checks do not wake the database. Manual key
 validation and normal proxy/admin requests continue to access the database and
 will wake it temporarily.
 
+This mode is intended primarily for low-traffic, single-node deployments. In a
+multi-node deployment every node still writes request logs synchronously, but
+activity-driven maintenance runs only on the master; traffic sent exclusively
+to followers will not prompt the master to perform due maintenance.
+
 **Performance & CORS Configuration:**
 
 | Setting                 | Environment Variable      | Default                       | Description                                     |

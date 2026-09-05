@@ -159,6 +159,7 @@ func (a *App) Start() error {
 		if err := database.EnableIdleMode(a.db); err != nil {
 			return fmt.Errorf("failed to enable database idle mode: %w", err)
 		}
+		a.requestLogService.EnableDatabaseIdleMode()
 		logrus.Info("Database idle mode enabled: key validation and log cleanup are driven by real traffic; idle SQL connections will not be retained")
 	}
 
@@ -166,9 +167,6 @@ func (a *App) Start() error {
 	// initialization has completed, so a startup error cannot leave workers
 	// running behind a server that never became ready.
 	if a.configManager.IsMaster() {
-		if databaseIdleMode {
-			a.requestLogService.EnableDatabaseIdleMode()
-		}
 		a.requestLogService.Start()
 		if databaseIdleMode {
 			a.logCleanupService.StartActivityDriven()
