@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gpt-load/internal/config"
@@ -35,11 +36,12 @@ const (
 
 // RequestLogService is responsible for managing request logs.
 type RequestLogService struct {
-	db              *gorm.DB
-	store           store.Store
-	settingsManager *config.SystemSettingsManager
-	wg              sync.WaitGroup
-	ticker          *time.Ticker
+	db               *gorm.DB
+	store            store.Store
+	settingsManager  *config.SystemSettingsManager
+	wg               sync.WaitGroup
+	ticker           *time.Ticker
+	databaseIdleMode atomic.Bool
 
 	lifecycleOnce   sync.Once
 	startOnce       sync.Once
@@ -77,6 +79,13 @@ func (s *RequestLogService) Start() {
 		go s.runLoop(s.lifecycleCtx)
 		go s.runHistoricalKeyValueCleanup(s.lifecycleCtx)
 	})
+}
+
+// EnableDatabaseIdleMode makes request logs durable on the request path and
+// disables the recurring flush timer. Start still drains any pending logs and
+// performs the one-time historical credential cleanup.
+func (s *RequestLogService) EnableDatabaseIdleMode() {
+	s.databaseIdleMode.Store(true)
 }
 
 func (s *RequestLogService) initLifecycle() {
@@ -235,6 +244,13 @@ func (s *RequestLogService) runHistoricalKeyValueCleanup(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if s.databaseIdleMode.Load() {
+			logrus.WithFields(logrus.Fields{
+				"cleaned_count": totalCleaned,
+				"retry_count":   retryCount + 1,
+			}).Warn("Historical request-log credential cleanup deferred until restart in database idle mode")
+			return
+		}
 		if cleaned > 0 {
 			retryDelay = minimumRetryDelay
 		}
@@ -284,8 +300,12 @@ func waitForCleanup(ctx context.Context, delay time.Duration) bool {
 func (s *RequestLogService) runLoop(ctx context.Context) {
 	defer s.wg.Done()
 
-	// Initial flush on start
-	s.flush()
+	// Drain logs buffered by a previous non-idle deployment once at startup.
+	s.flushPendingLogs()
+	if s.databaseIdleMode.Load() {
+		logrus.Info("Database idle mode: periodic request-log flush is disabled")
+		return
+	}
 
 	interval := time.Duration(s.settingsManager.GetSettings().RequestLogWriteIntervalMinutes) * time.Minute
 	if interval <= 0 {
@@ -339,7 +359,7 @@ func (s *RequestLogService) Record(log *models.RequestLog) error {
 	log.Timestamp = time.Now()
 	sanitizeRequestLog(log)
 
-	if s.settingsManager.GetSettings().RequestLogWriteIntervalMinutes == 0 {
+	if s.databaseIdleMode.Load() || s.settingsManager.GetSettings().RequestLogWriteIntervalMinutes == 0 {
 		return s.writeLogsToDB([]*models.RequestLog{log})
 	}
 
@@ -364,6 +384,10 @@ func (s *RequestLogService) flush() {
 		logrus.Debug("Sync mode enabled, skipping scheduled log flush.")
 		return
 	}
+	s.flushPendingLogs()
+}
+
+func (s *RequestLogService) flushPendingLogs() {
 
 	logrus.Debug("Master starting to flush request logs...")
 

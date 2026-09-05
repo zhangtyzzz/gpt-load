@@ -221,10 +221,21 @@ GPT-Load adopts a dual-layer configuration architecture:
 
 **Database Configuration:**
 
-| Setting             | Environment Variable | Default              | Description                                             |
-| ------------------- | -------------------- | -------------------- | ------------------------------------------------------- |
-| Database Connection | `DATABASE_DSN`       | `./data/gpt-load.db` | Database connection string (DSN) or file path           |
-| Redis Connection    | `REDIS_DSN`          | -                    | Redis connection string, uses memory storage when empty |
+| Setting                    | Environment Variable  | Default              | Description                                             |
+| -------------------------- | --------------------- | -------------------- | ------------------------------------------------------- |
+| Database Connection        | `DATABASE_DSN`        | `./data/gpt-load.db` | Database connection string (DSN) or file path           |
+| Serverless DB Idle Mode    | `DATABASE_IDLE_MODE`  | `false`              | Allow a scale-to-zero database to suspend between real requests |
+| Redis Connection           | `REDIS_DSN`           | -                    | Redis connection string, uses memory storage when empty |
+
+When `DATABASE_IDLE_MODE=true`, GPT-Load does not retain idle SQL connections
+and writes request logs synchronously. Invalid-key validation and expired-log
+cleanup become activity-driven: their existing intervals act as throttles, but
+a due run waits for the next real `/api` or `/proxy` request instead of waking
+the database by itself. Startup still drains pending request logs and runs the
+one-time historical credential cleanup. The `/health` endpoint remains
+database-free, so container health checks do not wake the database. Manual key
+validation and normal proxy/admin requests continue to access the database and
+will wake it temporarily.
 
 **Performance & CORS Configuration:**
 

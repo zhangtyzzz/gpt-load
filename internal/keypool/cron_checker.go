@@ -20,6 +20,7 @@ type CronChecker struct {
 	Validator       *KeyValidator
 	EncryptionSvc   encryption.Service
 	stopChan        chan struct{}
+	activityChan    chan struct{}
 	wg              sync.WaitGroup
 }
 
@@ -36,6 +37,7 @@ func NewCronChecker(
 		Validator:       validator,
 		EncryptionSvc:   encryptionSvc,
 		stopChan:        make(chan struct{}),
+		activityChan:    make(chan struct{}, 1),
 	}
 }
 
@@ -44,6 +46,23 @@ func (s *CronChecker) Start() {
 	logrus.Debug("Starting CronChecker...")
 	s.wg.Add(1)
 	go s.runLoop()
+}
+
+// StartActivityDriven waits for real application traffic instead of polling.
+// The five-minute interval remains a throttle, but time alone cannot wake a
+// serverless database.
+func (s *CronChecker) StartActivityDriven() {
+	logrus.Debug("Starting activity-driven CronChecker...")
+	s.wg.Add(1)
+	go s.runActivityLoop()
+}
+
+// NotifyActivity schedules a due-key scan without blocking the request path.
+func (s *CronChecker) NotifyActivity() {
+	select {
+	case s.activityChan <- struct{}{}:
+	default:
+	}
 }
 
 // Stop stops the cron job, respecting the context for shutdown timeout.
@@ -77,6 +96,26 @@ func (s *CronChecker) runLoop() {
 		select {
 		case <-ticker.C:
 			logrus.Debug("CronChecker: Running as Master, submitting validation jobs.")
+			s.submitValidationJobs()
+		case <-s.stopChan:
+			return
+		}
+	}
+}
+
+func (s *CronChecker) runActivityLoop() {
+	defer s.wg.Done()
+
+	var lastRun time.Time
+	for {
+		select {
+		case <-s.activityChan:
+			now := time.Now()
+			if !lastRun.IsZero() && now.Sub(lastRun) < 5*time.Minute {
+				continue
+			}
+			lastRun = now
+			logrus.Debug("CronChecker: real traffic received, checking for due validation jobs")
 			s.submitValidationJobs()
 		case <-s.stopChan:
 			return

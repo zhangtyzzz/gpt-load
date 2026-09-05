@@ -99,7 +99,8 @@ func (m *Manager) ReloadConfig() error {
 			FilePath:   utils.GetEnvOrDefault("LOG_FILE_PATH", "./data/logs/app.log"),
 		},
 		Database: types.DatabaseConfig{
-			DSN: utils.GetEnvOrDefault("DATABASE_DSN", "./data/gpt-load.db"),
+			DSN:      utils.GetEnvOrDefault("DATABASE_DSN", "./data/gpt-load.db"),
+			IdleMode: utils.ParseBoolean(os.Getenv("DATABASE_IDLE_MODE"), false),
 		},
 		RedisDSN:      os.Getenv("REDIS_DSN"),
 		EncryptionKey: os.Getenv("ENCRYPTION_KEY"),
@@ -253,6 +254,7 @@ func (m *Manager) DisplayServerConfig() {
 	} else {
 		logrus.Info("    Database: not configured")
 	}
+	logrus.Infof("    Database Idle Mode: %t", dbConfig.IdleMode)
 	if redisDSN != "" {
 		logrus.Info("    Redis: configured")
 	} else {

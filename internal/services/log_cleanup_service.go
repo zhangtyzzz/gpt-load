@@ -16,6 +16,7 @@ type LogCleanupService struct {
 	db              *gorm.DB
 	settingsManager *config.SystemSettingsManager
 	stopCh          chan struct{}
+	activityCh      chan struct{}
 	wg              sync.WaitGroup
 }
 
@@ -25,6 +26,7 @@ func NewLogCleanupService(db *gorm.DB, settingsManager *config.SystemSettingsMan
 		db:              db,
 		settingsManager: settingsManager,
 		stopCh:          make(chan struct{}),
+		activityCh:      make(chan struct{}, 1),
 	}
 }
 
@@ -33,6 +35,22 @@ func (s *LogCleanupService) Start() {
 	s.wg.Add(1)
 	go s.run()
 	logrus.Debug("Log cleanup service started")
+}
+
+// StartActivityDriven runs cleanup only after real application traffic. The
+// two-hour interval remains a throttle, never an independent wake-up source.
+func (s *LogCleanupService) StartActivityDriven() {
+	s.wg.Add(1)
+	go s.runActivityLoop()
+	logrus.Debug("Activity-driven log cleanup service started")
+}
+
+// NotifyActivity schedules due cleanup without blocking the request path.
+func (s *LogCleanupService) NotifyActivity() {
+	select {
+	case s.activityCh <- struct{}{}:
+	default:
+	}
 }
 
 // Stop 停止日志清理服务
@@ -65,6 +83,25 @@ func (s *LogCleanupService) run() {
 	for {
 		select {
 		case <-ticker.C:
+			s.cleanupExpiredLogs()
+		case <-s.stopCh:
+			return
+		}
+	}
+}
+
+func (s *LogCleanupService) runActivityLoop() {
+	defer s.wg.Done()
+
+	var lastRun time.Time
+	for {
+		select {
+		case <-s.activityCh:
+			now := time.Now()
+			if !lastRun.IsZero() && now.Sub(lastRun) < 2*time.Hour {
+				continue
+			}
+			lastRun = now
 			s.cleanupExpiredLogs()
 		case <-s.stopCh:
 			return

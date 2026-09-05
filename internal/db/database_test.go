@@ -6,10 +6,40 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 type paramsFilter interface {
 	ParamsFilter(ctx context.Context, sql string, params ...any) (string, []any)
+}
+
+func TestEnableIdleModeReleasesIdleConnections(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "idle-mode.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	sqlDB.SetMaxIdleConns(1)
+	if err := sqlDB.Ping(); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+	if got := sqlDB.Stats().Idle; got == 0 {
+		t.Fatal("test setup did not create an idle connection")
+	}
+
+	if err := EnableIdleMode(database); err != nil {
+		t.Fatalf("EnableIdleMode: %v", err)
+	}
+	if got := sqlDB.Stats().Idle; got != 0 {
+		t.Fatalf("idle connections after EnableIdleMode = %d, want 0", got)
+	}
 }
 
 func TestDatabaseLoggerDoesNotRenderSQLParameters(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gpt-load/internal/config"
+	database "gpt-load/internal/db"
 	db "gpt-load/internal/db/migrations"
 	"gpt-load/internal/i18n"
 	"gpt-load/internal/keypool"
@@ -153,14 +154,29 @@ func (a *App) Start() error {
 	if err := a.groupManager.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize group manager: %w", err)
 	}
+	databaseIdleMode := a.configManager.GetDatabaseConfig().IdleMode
+	if databaseIdleMode {
+		if err := database.EnableIdleMode(a.db); err != nil {
+			return fmt.Errorf("failed to enable database idle mode: %w", err)
+		}
+		logrus.Info("Database idle mode enabled: key validation and log cleanup are driven by real traffic; idle SQL connections will not be retained")
+	}
 
 	// Start master-only background services only after every fallible cache
 	// initialization has completed, so a startup error cannot leave workers
 	// running behind a server that never became ready.
 	if a.configManager.IsMaster() {
+		if databaseIdleMode {
+			a.requestLogService.EnableDatabaseIdleMode()
+		}
 		a.requestLogService.Start()
-		a.logCleanupService.Start()
-		a.cronChecker.Start()
+		if databaseIdleMode {
+			a.logCleanupService.StartActivityDriven()
+			a.cronChecker.StartActivityDriven()
+		} else {
+			a.logCleanupService.Start()
+			a.cronChecker.Start()
+		}
 	}
 
 	// Create HTTP server
