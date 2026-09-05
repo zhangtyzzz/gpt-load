@@ -11,6 +11,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // TestAuditMaskCollisionIsDistinguishable constructs two keys that differ only
@@ -127,7 +128,12 @@ func TestAuditMaskCollisionIsDistinguishable(t *testing.T) {
 // fewer than maskSearchKeyLimit, so a truncated scan is visible as a wrong count
 // rather than hidden behind the cap.
 func TestAuditBareMaskScanReachesBeyondFirstBatch(t *testing.T) {
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		// The race detector can make the 600-row fixture cross GORM's slow-query
+		// threshold. Logging the full multi-row INSERT exceeds the Actions runner's
+		// line limit and aborts an otherwise passing test process.
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
