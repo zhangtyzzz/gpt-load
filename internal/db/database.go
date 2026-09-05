@@ -79,6 +79,19 @@ func NewDB(configManager types.ConfigManager) (*gorm.DB, error) {
 	return DB, nil
 }
 
+// EnableIdleMode prevents database/sql from retaining idle connections. This
+// lets serverless databases suspend after the last real application request.
+// It is intentionally applied after startup migrations and cache hydration so
+// those operations can still reuse a connection efficiently.
+func EnableIdleMode(database *gorm.DB) error {
+	sqlDB, err := database.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get sql.DB for idle mode: %w", err)
+	}
+	sqlDB.SetMaxIdleConns(0)
+	return nil
+}
+
 func newDatabaseLogger(writer io.Writer, debug bool) logger.Interface {
 	logLevel := logger.Warn
 	slowThreshold := 200 * time.Millisecond

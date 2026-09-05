@@ -93,6 +93,8 @@ Exit criteria:
 - Replace lossy request-log queue behavior with acknowledge-after-commit flow.
 - Add versioned configuration convergence after node reconnect.
 - Tune connection pools by database driver and split liveness/readiness checks.
+- Support an opt-in serverless database idle mode that removes periodic database
+  wakeups while keeping health checks and on-demand operations available.
 - Add an active-key membership set for O(1) affinity checks and a generation or
   distributed rebuild lock so cluster startup cannot overwrite concurrent key
   changes.

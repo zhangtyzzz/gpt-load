@@ -88,7 +88,8 @@ type LogConfig struct {
 
 // DatabaseConfig represents database configuration
 type DatabaseConfig struct {
-	DSN string `json:"dsn"`
+	DSN      string `json:"dsn"`
+	IdleMode bool   `json:"idle_mode"`
 }
 
 type RetryError struct {

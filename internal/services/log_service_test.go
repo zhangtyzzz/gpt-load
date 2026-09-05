@@ -94,6 +94,27 @@ func TestRecordReplacesSuppliedCredentialWithFingerprint(t *testing.T) {
 	}
 }
 
+func TestRecordWritesSynchronouslyInDatabaseIdleMode(t *testing.T) {
+	database := newRequestLogTestDB(t)
+	memoryStore := store.NewMemoryStore()
+	t.Cleanup(func() { _ = memoryStore.Close() })
+	service := NewRequestLogService(database, memoryStore, config.NewSystemSettingsManager())
+	service.EnableDatabaseIdleMode()
+
+	logEntry := &models.RequestLog{KeyHash: "idle-mode-key-hash"}
+	if err := service.Record(logEntry); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	var stored models.RequestLog
+	if err := database.First(&stored, "id = ?", logEntry.ID).Error; err != nil {
+		t.Fatalf("load synchronously written request log: %v", err)
+	}
+	if _, err := memoryStore.Get(RequestLogCachePrefix + logEntry.ID); err == nil {
+		t.Fatal("idle-mode request log was buffered instead of written synchronously")
+	}
+}
+
 func TestWriteLogsToDBSanitizesLegacyPendingEntry(t *testing.T) {
 	database := newRequestLogTestDB(t)
 	service := &RequestLogService{db: database}

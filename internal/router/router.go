@@ -4,6 +4,7 @@ import (
 	"embed"
 	"gpt-load/internal/handler"
 	"gpt-load/internal/i18n"
+	"gpt-load/internal/keypool"
 	"gpt-load/internal/middleware"
 	"gpt-load/internal/proxy"
 	"gpt-load/internal/services"
@@ -43,6 +44,8 @@ func NewRouter(
 	proxyServer *proxy.ProxyServer,
 	configManager types.ConfigManager,
 	groupManager *services.GroupManager,
+	cronChecker *keypool.CronChecker,
+	logCleanupService *services.LogCleanupService,
 	buildFS embed.FS,
 	indexPage []byte,
 ) *gin.Engine {
@@ -57,6 +60,15 @@ func NewRouter(
 	router.Use(middleware.CORS(configManager.GetCORSConfig()))
 	router.Use(middleware.RateLimiter(configManager.GetPerformanceConfig()))
 	router.Use(middleware.SecurityHeaders())
+	if configManager.GetDatabaseConfig().IdleMode {
+		router.Use(func(c *gin.Context) {
+			c.Next()
+			if shouldNotifyDatabaseMaintenance(c.Request.URL.Path) {
+				cronChecker.NotifyActivity()
+				logCleanupService.NotifyActivity()
+			}
+		})
+	}
 	startTime := time.Now()
 	router.Use(func(c *gin.Context) {
 		c.Set("serverStartTime", startTime)
@@ -70,6 +82,10 @@ func NewRouter(
 	registerFrontendRoutes(router, buildFS, indexPage)
 
 	return router
+}
+
+func shouldNotifyDatabaseMaintenance(path string) bool {
+	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/proxy/")
 }
 
 // registerSystemRoutes 注册系统级路由
