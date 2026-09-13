@@ -21,7 +21,7 @@ release notes, and support channels are published in this repository.
 - **Dynamic Configuration**: System settings and group configurations support hot-reload without requiring restarts
 - **Enterprise Architecture**: Distributed leader-follower deployment supporting horizontal scaling and high availability
 - **Modern Management**: Vue 3-based web management interface that is intuitive and user-friendly
-- **Comprehensive Monitoring**: Real-time statistics, health checks, and detailed request logging
+- **Comprehensive Monitoring**: Real-time statistics, health checks, and request logs with HTTP method filtering
 - **High-Performance Design**: Zero-copy streaming, connection pool reuse, and atomic operations
 - **Production Ready**: Graceful shutdown, error recovery, and comprehensive security mechanisms
 - **Dual Authentication**: Separate authentication for management and proxy, with proxy authentication supporting global and group-level keys

@@ -175,6 +175,7 @@ type RequestLog struct {
 	IsSuccess       bool      `gorm:"not null" json:"is_success"`
 	SourceIP        string    `gorm:"type:varchar(64)" json:"source_ip"`
 	StatusCode      int       `gorm:"not null" json:"status_code"`
+	RequestMethod   string    `gorm:"type:varchar(32);index" json:"request_method"`
 	RequestPath     string    `gorm:"type:varchar(500)" json:"request_path"`
 	Duration        int64     `gorm:"not null" json:"duration_ms"`
 	ErrorMessage    string    `gorm:"type:text" json:"error_message"`

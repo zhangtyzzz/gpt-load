@@ -840,18 +840,19 @@ func (ps *ProxyServer) logRequest(
 	duration := time.Since(startTime).Milliseconds()
 
 	logEntry := &models.RequestLog{
-		GroupID:      group.ID,
-		GroupName:    group.Name,
-		IsSuccess:    finalError == nil && statusCode < 400,
-		SourceIP:     c.ClientIP(),
-		StatusCode:   statusCode,
-		RequestPath:  utils.TruncateString(utils.SanitizeURLForLogging(c.Request.URL), 500),
-		Duration:     duration,
-		UserAgent:    userAgent,
-		RequestType:  requestType,
-		IsStream:     isStream,
-		UpstreamAddr: utils.TruncateString(utils.SanitizeURLStringForLogging(upstreamAddr), 500),
-		RequestBody:  requestBodyToLog,
+		GroupID:       group.ID,
+		GroupName:     group.Name,
+		IsSuccess:     finalError == nil && statusCode < 400,
+		SourceIP:      c.ClientIP(),
+		StatusCode:    statusCode,
+		RequestMethod: utils.TruncateString(c.Request.Method, 32),
+		RequestPath:   utils.TruncateString(utils.SanitizeURLForLogging(c.Request.URL), 500),
+		Duration:      duration,
+		UserAgent:     userAgent,
+		RequestType:   requestType,
+		IsStream:      isStream,
+		UpstreamAddr:  utils.TruncateString(utils.SanitizeURLStringForLogging(upstreamAddr), 500),
+		RequestBody:   requestBodyToLog,
 	}
 
 	// Set parent group

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -587,5 +588,26 @@ func TestStreamLogKeysToCSVExportsMaskAndFingerprint(t *testing.T) {
 	}
 	if got, want := orphanRow[0], utils.KeyFingerprint(orphanHash); got != want {
 		t.Errorf("CSV identifier for historical row = %q, want fingerprint %q", got, want)
+	}
+}
+
+func TestLogFilterMatchesNormalizedRequestMethod(t *testing.T) {
+	database := newRequestLogTestDB(t)
+	service := NewLogService(database, nil)
+	for _, entry := range []models.RequestLog{
+		{ID: "get-log", RequestMethod: http.MethodGet},
+		{ID: "delete-log", RequestMethod: http.MethodDelete},
+	} {
+		if err := database.Create(&entry).Error; err != nil {
+			t.Fatalf("insert request log: %v", err)
+		}
+	}
+
+	var logs []models.RequestLog
+	if err := service.GetLogsQuery(LogFilter{RequestMethod: " delete "}).Find(&logs).Error; err != nil {
+		t.Fatalf("filter request logs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].ID != "delete-log" {
+		t.Fatalf("filtered logs = %#v, want delete-log", logs)
 	}
 }

@@ -55,6 +55,8 @@ compatibility validation remain release gates before stable promotion.
 - Make Generic HTTP the protocol-neutral proxy path: preserve method, path,
   query, body, end-to-end headers, upstream status, multi-value headers, and
   streaming response behavior by default.
+- Record the original HTTP method in request logs and expose it in filtering,
+  tables, and request details so method-specific upstream failures are diagnosable.
 - Express credential injection, validation, response classification, and retry
   eligibility as optional declarative policies. Provider and protocol presets
   only populate those ordinary configuration fields.

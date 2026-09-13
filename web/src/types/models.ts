@@ -179,6 +179,7 @@ export interface RequestLog {
   is_success: boolean;
   source_ip: string;
   status_code: number;
+  request_method: string;
   request_path: string;
   duration_ms: number;
   error_message: string;
@@ -220,6 +221,7 @@ export interface LogFilter {
   start_time?: string | null;
   end_time?: string | null;
   request_type?: "retry" | "final";
+  request_method?: string;
 }
 
 export interface DashboardStats {
