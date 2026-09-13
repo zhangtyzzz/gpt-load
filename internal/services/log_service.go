@@ -9,6 +9,7 @@ import (
 	"gpt-load/internal/utils"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -50,6 +51,7 @@ type LogFilter struct {
 	Model           string     `json:"model"`
 	IsSuccess       *bool      `json:"is_success"`
 	RequestType     string     `json:"request_type"`
+	RequestMethod   string     `json:"request_method"`
 	StatusCode      *int       `json:"status_code"`
 	SourceIP        string     `json:"source_ip"`
 	ErrorContains   string     `json:"error_contains"`
@@ -227,6 +229,9 @@ func (s *LogService) logFiltersScope(filter LogFilter) func(db *gorm.DB) *gorm.D
 		}
 		if filter.RequestType != "" {
 			db = db.Where("request_type = ?", filter.RequestType)
+		}
+		if filter.RequestMethod != "" {
+			db = db.Where("request_method = ?", strings.ToUpper(strings.TrimSpace(filter.RequestMethod)))
 		}
 		if filter.StatusCode != nil {
 			db = db.Where("status_code = ?", *filter.StatusCode)

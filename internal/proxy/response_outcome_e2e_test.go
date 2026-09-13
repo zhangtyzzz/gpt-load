@@ -236,6 +236,9 @@ func (h *responseOutcomeHarness) waitForOnlyLog(t *testing.T, path string) model
 	if entry.RequestType != models.RequestTypeFinal {
 		t.Fatalf("request type=%q, want final", entry.RequestType)
 	}
+	if entry.RequestMethod != http.MethodGet {
+		t.Fatalf("request method=%q, want GET", entry.RequestMethod)
+	}
 	if strings.Contains(entry.ErrorMessage, h.upstreamKey) {
 		t.Fatalf("request log leaked selected key: %q", entry.ErrorMessage)
 	}

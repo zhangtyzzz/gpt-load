@@ -37,6 +37,7 @@ type LogResponse struct {
 	IsSuccess       bool      `json:"is_success"`
 	SourceIP        string    `json:"source_ip"`
 	StatusCode      int       `json:"status_code"`
+	RequestMethod   string    `json:"request_method"`
 	RequestPath     string    `json:"request_path"`
 	Duration        int64     `json:"duration_ms"`
 	ErrorMessage    string    `json:"error_message"`
@@ -70,6 +71,7 @@ func newLogResponse(logEntry models.RequestLog, keyIdentifiers map[string]string
 		IsSuccess:       logEntry.IsSuccess,
 		SourceIP:        logEntry.SourceIP,
 		StatusCode:      logEntry.StatusCode,
+		RequestMethod:   logEntry.RequestMethod,
 		RequestPath:     utils.SanitizeText(logEntry.RequestPath),
 		Duration:        logEntry.Duration,
 		ErrorMessage:    utils.SanitizeText(logEntry.ErrorMessage),
@@ -163,6 +165,7 @@ func logFilterFromQuery(c *gin.Context) (services.LogFilter, bool) {
 		KeyValue:        c.Query("key_value"),
 		Model:           c.Query("model"),
 		RequestType:     c.Query("request_type"),
+		RequestMethod:   c.Query("request_method"),
 		SourceIP:        c.Query("source_ip"),
 		ErrorContains:   c.Query("error_contains"),
 	}

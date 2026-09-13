@@ -50,12 +50,13 @@ func TestGetLogsReturnsFingerprintForHistoricalCredential(t *testing.T) {
 	}
 	const keyHash = "fedcba9876543210fedcba9876543210"
 	if err := database.Create(&models.RequestLog{
-		ID:           "api-log",
-		KeyValue:     secret,
-		KeyHash:      keyHash,
-		RequestPath:  "/proxy/demo?model=gpt-4&api_key=" + requestPathSecret,
-		ErrorMessage: "upstream rejected token=" + errorSecret,
-		RequestBody:  `{"model":"gpt-4","client_secret":"` + requestBodySecret + `"}`,
+		ID:            "api-log",
+		RequestMethod: http.MethodDelete,
+		KeyValue:      secret,
+		KeyHash:       keyHash,
+		RequestPath:   "/proxy/demo?model=gpt-4&api_key=" + requestPathSecret,
+		ErrorMessage:  "upstream rejected token=" + errorSecret,
+		RequestBody:   `{"model":"gpt-4","client_secret":"` + requestBodySecret + `"}`,
 		UpstreamAddr: "https://" + upstreamSecrets[0] + ":" + upstreamSecrets[1] + "@upstream.example/v1" +
 			"?key=" + upstreamSecrets[2] +
 			"&api_key=" + upstreamSecrets[3] +
@@ -94,6 +95,9 @@ func TestGetLogsReturnsFingerprintForHistoricalCredential(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "region=us-east-1") {
 		t.Fatalf("log API removed non-sensitive upstream query context: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"request_method":"DELETE"`) {
+		t.Fatalf("log API omitted request method: %s", recorder.Body.String())
 	}
 	if strings.Contains(recorder.Body.String(), `"key_hash"`) || strings.Contains(recorder.Body.String(), keyHash) {
 		t.Fatalf("log API leaked internal key hash: %s", recorder.Body.String())

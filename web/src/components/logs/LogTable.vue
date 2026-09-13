@@ -82,6 +82,7 @@ const filters = reactive({
   start_time: null as number | null,
   end_time: null as number | null,
   request_type: ref(null),
+  request_method: "",
 });
 
 const hasActiveFilters = computed(() =>
@@ -97,6 +98,7 @@ const hasActiveFilters = computed(() =>
     filters.start_time,
     filters.end_time,
     filters.request_type,
+    filters.request_method,
   ].some(value => value !== "" && value !== null)
 );
 
@@ -140,6 +142,7 @@ const loadLogs = async () => {
       start_time: filters.start_time ? new Date(filters.start_time).toISOString() : undefined,
       end_time: filters.end_time ? new Date(filters.end_time).toISOString() : undefined,
       request_type: filters.request_type || undefined,
+      request_method: filters.request_method.trim().toUpperCase() || undefined,
     };
 
     const res = await logApi.getLogs(params);
@@ -210,13 +213,24 @@ const copyContent = async (content: string, type: string) => {
 // Column visibility management
 const visibleColumns = ref<string[]>([]);
 const STORAGE_KEY = "log-table-visible-columns";
+const STORAGE_VERSION_KEY = `${STORAGE_KEY}-version`;
+const STORAGE_VERSION = 2;
 
 // Load column preferences from localStorage
 const loadColumnPreferences = () => {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
-      visibleColumns.value = JSON.parse(saved);
+      const parsed: unknown = JSON.parse(saved);
+      if (!Array.isArray(parsed) || !parsed.every(value => typeof value === "string")) {
+        throw new Error("Invalid log column preferences");
+      }
+      const storedVersion = Number(localStorage.getItem(STORAGE_VERSION_KEY)) || 1;
+      visibleColumns.value =
+        storedVersion < STORAGE_VERSION
+          ? Array.from(new Set([...parsed, "request_method"]))
+          : parsed;
+      localStorage.setItem(STORAGE_VERSION_KEY, String(STORAGE_VERSION));
     } catch {
       // If parse fails, use defaults
       setDefaultColumns();
@@ -234,6 +248,7 @@ const setDefaultColumns = () => {
 // Save column preferences to localStorage
 const saveColumnPreferences = () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleColumns.value));
+  localStorage.setItem(STORAGE_VERSION_KEY, String(STORAGE_VERSION));
 };
 
 // A row whose key can no longer be resolved to a key-management entry falls
@@ -328,6 +343,13 @@ const allColumnConfigs: ColumnConfig[] = [
         { type: row.is_stream ? "info" : "default", size: "small", round: true },
         { default: () => (row.is_stream ? t("logs.stream") : t("logs.nonStream")) }
       ),
+  },
+  {
+    key: "request_method",
+    title: t("logs.requestMethod"),
+    width: 110,
+    defaultVisible: true,
+    render: (row: LogRow) => row.request_method || "-",
   },
   {
     key: "status_code",
@@ -484,6 +506,7 @@ const resetFilters = () => {
   filters.start_time = null;
   filters.end_time = null;
   filters.request_type = null;
+  filters.request_method = "";
   handleSearch();
 };
 
@@ -507,6 +530,7 @@ const exportLogs = async () => {
     start_time: filters.start_time ? new Date(filters.start_time).toISOString() : undefined,
     end_time: filters.end_time ? new Date(filters.end_time).toISOString() : undefined,
     request_type: filters.request_type || undefined,
+    request_method: filters.request_method.trim().toUpperCase() || undefined,
   };
 
   exporting.value = true;
@@ -581,6 +605,15 @@ const deselectAllColumns = () => {
                   clearable
                   :placeholder="t('logs.requestType')"
                   @update:value="handleSearch"
+                />
+              </div>
+              <div class="filter-item">
+                <n-input
+                  v-model:value="filters.request_method"
+                  :placeholder="t('logs.requestMethod')"
+                  size="small"
+                  clearable
+                  @keyup.enter="handleSearch"
                 />
               </div>
               <div class="filter-item">
@@ -894,6 +927,10 @@ const deselectAllColumns = () => {
                   {{ t("logs.retryRequest") }}
                 </n-tag>
                 <n-tag v-else type="default" size="small">{{ t("logs.finalRequest") }}</n-tag>
+              </div>
+              <div class="detail-item-compact">
+                <span class="detail-label-compact">{{ t("logs.requestMethod") }}:</span>
+                <n-tag type="default" size="small">{{ selectedLog.request_method || "-" }}</n-tag>
               </div>
               <div class="detail-item-compact">
                 <span class="detail-label-compact">{{ t("logs.responseType") }}:</span>

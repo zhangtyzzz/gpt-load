@@ -252,6 +252,18 @@ func TestGenericHTTPTransparentProxyAndLegacyAffinityEndToEnd(t *testing.T) {
 	if echo["method"] != http.MethodPut || echo["path"] != "/echo" || echo["query"] != "key=business%2Fvalue&x=1&x=2" || echo["body"] != "opaque-body" {
 		t.Fatalf("request was not transparent: %#v", echo)
 	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+		resp := sendGenericRequest(t, &transparentClient, method, baseURL+"/echo", proxyKey, nil, "method-body")
+		var methodEcho map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&methodEcho); err != nil {
+			resp.Body.Close()
+			t.Fatalf("decode %s echo: %v", method, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || methodEcho["method"] != method || methodEcho["body"] != "method-body" {
+			t.Fatalf("%s request was not transparent: status=%d payload=%#v", method, resp.StatusCode, methodEcho)
+		}
+	}
 	if echo["session"] != "client-session" || echoResp.Header.Get("Mcp-Session-Id") != "upstream-session" {
 		t.Fatalf("MCP session header was not transparent: request=%v response=%q", echo["session"], echoResp.Header.Get("Mcp-Session-Id"))
 	}
