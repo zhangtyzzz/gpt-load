@@ -71,10 +71,10 @@ a {
 
 .page-title {
   color: var(--text-primary);
-  font-size: clamp(1.55rem, 2.8vw, 2rem);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.12;
+  font-size: clamp(1.4rem, 2.4vw, 1.6rem);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.2;
 }
 
 .page-description {
@@ -181,7 +181,7 @@ body .global-message-container.n-message-container--top-right {
 }
 
 ::selection {
-  background: rgba(0, 113, 227, 0.2);
+  background: rgba(255, 79, 31, 0.18);
   color: var(--text-primary);
 }
 
@@ -190,13 +190,13 @@ body .global-message-container.n-message-container--top-right {
 }
 
 *:focus-visible {
-  outline: 3px solid rgba(0, 113, 227, 0.42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {

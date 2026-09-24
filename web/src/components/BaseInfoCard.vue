@@ -203,7 +203,6 @@ watch(stats, updateAnimatedValues, { immediate: true });
   border: 1px solid var(--border-color-light);
   position: relative;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
   transition:
     transform var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
@@ -234,15 +233,15 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .key-icon {
-  background: rgba(0, 113, 227, 0.1);
+  background: var(--accent-soft);
 }
 
 .rpm-icon {
-  background: rgba(255, 159, 10, 0.12);
+  background: rgba(184, 116, 8, 0.12);
 }
 
 .request-icon {
-  background: rgba(90, 200, 250, 0.14);
+  background: rgba(55, 125, 226, 0.12);
 }
 
 .error-icon {
@@ -267,9 +266,9 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .stat-value {
-  font-size: clamp(1.75rem, 3vw, 2.2rem);
-  font-weight: 700;
-  line-height: 1.08;
+  font-size: clamp(1.5rem, 2.6vw, 1.75rem);
+  font-weight: 650;
+  line-height: 1.15;
   color: var(--text-primary);
   margin-bottom: 4px;
   letter-spacing: -0.035em;
@@ -277,9 +276,11 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .stat-title {
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .stat-bar {
@@ -298,19 +299,19 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .key-bar {
-  background: #0071e3;
+  background: var(--primary-color);
 }
 
 .rpm-bar {
-  background: #ff9f0a;
+  background: #b87408;
 }
 
 .request-bar {
-  background: #5ac8fa;
+  background: var(--chart-series-input);
 }
 
 .error-bar {
-  background: #248a3d;
+  background: var(--success-color);
 }
 
 @media (prefers-reduced-motion: reduce) {

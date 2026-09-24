@@ -77,6 +77,11 @@ export default {
     secureAccess: "認証情報はこの管理セッションの確認にのみ使用されます",
   },
   nav: {
+    section: {
+      overview: "概要",
+      management: "管理",
+      system: "システム",
+    },
     dashboard: "ダッシュボード",
     keys: "キー管理",
     logs: "ログ",

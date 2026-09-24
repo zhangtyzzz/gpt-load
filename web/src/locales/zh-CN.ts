@@ -77,6 +77,11 @@ export default {
     secureAccess: "凭据仅用于验证此管理会话",
   },
   nav: {
+    section: {
+      overview: "概览",
+      management: "管理",
+      system: "系统",
+    },
     dashboard: "仪表盘",
     keys: "密钥管理",
     logs: "日志",
