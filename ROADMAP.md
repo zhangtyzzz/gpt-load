@@ -69,6 +69,9 @@ compatibility validation remain release gates before stable promotion.
 - When a Generic aggregate child has no selectable key or a safe retry exhausts
   its attempted keys, continue to a healthy sibling without replaying unsafe
   methods or reusing a key already attempted by the request.
+- Freeze each request's retry budget at the group that serves its first
+  attempt, so groups reached through aggregate failover can neither extend nor
+  truncate the retries promised to the request.
 
 Exit criteria:
 
