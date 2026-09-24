@@ -7,7 +7,7 @@ import NavBar from "@/components/NavBar.vue";
 import ThemeToggle from "@/components/ThemeToggle.vue";
 import { MenuOutline } from "@vicons/ionicons5";
 import { useMediaQuery } from "@vueuse/core";
-import { NButton, NDrawer, NDrawerContent, NIcon, NLayout, NLayoutContent } from "naive-ui";
+import { NButton, NDrawer, NDrawerContent, NIcon } from "naive-ui";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -24,26 +24,37 @@ watch(isMobile, value => {
 </script>
 
 <template>
-  <n-layout class="main-layout">
+  <div class="app-shell">
     <a class="skip-link" href="#main-content">{{ t("common.skipToContent") }}</a>
 
-    <header class="layout-header material-chrome">
-      <div class="header-content">
-        <router-link class="header-brand interactive" :to="{ name: 'dashboard' }">
+    <aside class="app-sidebar">
+      <router-link class="sidebar-brand interactive" :to="{ name: 'dashboard' }">
+        <span class="brand-icon" aria-hidden="true">
+          <img src="@/assets/logo-256.png" alt="" />
+        </span>
+        <span class="brand-copy">
+          <strong>GPT Load</strong>
+          <small>{{ t("common.console") }}</small>
+        </span>
+      </router-link>
+
+      <nav class="sidebar-nav" :aria-label="t('common.primaryNavigation')">
+        <nav-bar mode="vertical" />
+      </nav>
+    </aside>
+
+    <div class="app-main">
+      <header class="app-topbar material-chrome">
+        <router-link v-if="isMobile" class="topbar-brand interactive" :to="{ name: 'dashboard' }">
           <span class="brand-icon" aria-hidden="true">
             <img src="@/assets/logo-256.png" alt="" />
           </span>
           <span class="brand-copy">
             <strong>GPT Load</strong>
-            <small>{{ t("common.console") }}</small>
           </span>
         </router-link>
 
-        <nav v-if="!isMobile" class="header-nav" :aria-label="t('common.primaryNavigation')">
-          <nav-bar />
-        </nav>
-
-        <div class="header-actions">
+        <div class="topbar-actions">
           <language-selector />
           <theme-toggle />
           <logout v-if="!isMobile" />
@@ -57,8 +68,19 @@ watch(isMobile, value => {
             <template #icon><n-icon :component="MenuOutline" /></template>
           </n-button>
         </div>
-      </div>
-    </header>
+      </header>
+
+      <main id="main-content" class="layout-content" tabindex="-1">
+        <div class="content-wrapper">
+          <router-view v-slot="{ Component }">
+            <transition name="fade" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </router-view>
+        </div>
+        <app-footer />
+      </main>
+    </div>
 
     <n-drawer v-model:show="isMenuOpen" :width="drawerWidth" placement="right">
       <n-drawer-content
@@ -74,29 +96,16 @@ watch(isMobile, value => {
         </div>
       </n-drawer-content>
     </n-drawer>
-
-    <n-layout-content id="main-content" class="layout-content" tabindex="-1">
-      <div class="content-wrapper">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
-      </div>
-    </n-layout-content>
-
-    <app-footer />
-  </n-layout>
+  </div>
 
   <global-task-progress-bar />
 </template>
 
 <style scoped>
-.main-layout {
-  display: flex;
+.app-shell {
+  display: grid;
   min-height: 100vh;
-  flex-direction: column;
-  background: transparent;
+  grid-template-columns: 240px minmax(0, 1fr);
 }
 
 .skip-link {
@@ -105,11 +114,11 @@ watch(isMobile, value => {
   left: 0.75rem;
   z-index: 1000;
   padding: 0.625rem 0.875rem;
-  border-radius: 0.625rem;
+  border-radius: var(--border-radius-md);
   background: var(--card-bg-solid);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
   color: var(--primary-color);
-  font-weight: 650;
+  font-weight: 600;
   transform: translateY(-200%);
 }
 
@@ -117,30 +126,23 @@ watch(isMobile, value => {
   transform: translateY(0);
 }
 
-.layout-header {
+.app-sidebar {
   position: sticky;
   top: 0;
-  z-index: 100;
-  border-width: 0 0 1px;
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  padding: 20px 16px;
+  border-right: 1px solid var(--border-color-light);
+  background: var(--sidebar-bg);
+  overflow-y: auto;
 }
 
-.header-content {
-  display: grid;
-  width: min(100%, 1440px);
-  min-height: 64px;
-  padding: 0 1.5rem;
-  margin: 0 auto;
-  align-items: center;
-  grid-template-columns: minmax(12rem, 1fr) auto minmax(12rem, 1fr);
-}
-
-.header-brand {
-  display: inline-flex;
-  width: fit-content;
-  min-width: 0;
+.sidebar-brand {
+  display: flex;
   align-items: center;
   gap: 0.625rem;
-  border-radius: 0.75rem;
+  padding: 4px 8px 20px;
   color: var(--text-primary);
   text-decoration: none;
 }
@@ -149,12 +151,12 @@ watch(isMobile, value => {
   display: grid;
   width: 2.25rem;
   height: 2.25rem;
+  flex-shrink: 0;
   overflow: hidden;
   place-items: center;
   border: 1px solid var(--border-color-light);
-  border-radius: 0.7rem;
+  border-radius: 9px;
   background: var(--card-bg-solid);
-  box-shadow: var(--shadow-sm);
 }
 
 .brand-icon img {
@@ -169,28 +171,56 @@ watch(isMobile, value => {
 }
 
 .brand-copy strong {
-  font-size: 0.96rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
 .brand-copy small {
   margin-top: 0.25rem;
-  color: var(--text-tertiary);
-  font-size: 0.68rem;
-  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 550;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.header-nav {
-  justify-self: center;
+.sidebar-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
 }
 
-.header-actions {
+.app-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.topbar-brand {
+  display: inline-flex;
+  margin-right: auto;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
-  justify-self: end;
   gap: 0.25rem;
 }
 
@@ -202,51 +232,44 @@ watch(isMobile, value => {
 }
 
 .layout-content {
+  display: flex;
   width: 100%;
-  max-width: 1440px;
   flex: 1;
-  margin: 0 auto;
+  flex-direction: column;
   background: transparent;
 }
 
 .content-wrapper {
-  min-height: calc(100vh - 116px);
-  padding: 1.75rem 1.5rem 2.5rem;
+  flex: 1;
+  padding: 28px 32px 40px;
+}
+
+@media (max-width: 1150px) {
+  .content-wrapper {
+    padding: 24px;
+  }
 }
 
 @media (max-width: 820px) {
-  .header-content {
-    min-height: 58px;
-    padding: 0 1rem;
-    grid-template-columns: 1fr auto;
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .brand-copy small {
+  .app-sidebar {
     display: none;
+  }
+
+  .app-topbar {
+    padding: 0 12px;
   }
 
   .content-wrapper {
-    min-height: calc(100vh - 106px);
-    padding: 1.25rem 1rem 2rem;
-  }
-}
-
-@media (max-width: 420px) {
-  .header-content {
-    padding: 0 0.75rem;
-  }
-
-  .brand-copy {
-    display: none;
-  }
-
-  .header-actions {
-    gap: 0;
+    padding: 20px 16px 28px;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .layout-header {
+  .app-topbar {
     background: var(--card-bg-solid);
     backdrop-filter: none;
   }

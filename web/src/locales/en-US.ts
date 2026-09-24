@@ -77,6 +77,11 @@ export default {
     secureAccess: "Your credential is used only to verify this admin session",
   },
   nav: {
+    section: {
+      overview: "Overview",
+      management: "Management",
+      system: "System",
+    },
     dashboard: "Dashboard",
     keys: "Keys",
     logs: "Logs",

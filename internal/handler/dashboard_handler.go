@@ -168,12 +168,12 @@ func (s *Server) Chart(c *gin.Context) {
 			{
 				Label: i18n.Message(c, "dashboard.success_requests"),
 				Data:  successData,
-				Color: "rgba(10, 200, 110, 1)",
+				Color: "rgba(26, 155, 85, 1)",
 			},
 			{
 				Label: i18n.Message(c, "dashboard.failed_requests"),
 				Data:  failureData,
-				Color: "rgba(255, 70, 70, 1)",
+				Color: "rgba(220, 55, 55, 1)",
 			},
 		},
 	}

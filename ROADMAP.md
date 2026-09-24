@@ -21,8 +21,11 @@ current development line and awaits prerelease validation.
   background batches so large installations can upgrade without delaying
   readiness or replacing current fingerprints.
 - Restrict normal startup cleanup to database-derived key-pool cache data.
-- Establish the Apple-inspired theme, navigation, responsive shell, empty
-  states, settings dirty protection, and accessibility baseline.
+- Establish the console theme, navigation, responsive shell, empty
+  states, settings dirty protection, and accessibility baseline; the visual
+  system now follows the design language migrated from the upstream v2
+  console (warm neutrals, coral action color, flat bordered panels, grouped
+  sidebar navigation).
 - Add repository-level engineering and interface rules in `AGENTS.md`.
 
 Exit criteria:
