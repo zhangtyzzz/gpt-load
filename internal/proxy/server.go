@@ -131,7 +131,11 @@ func (ps *ProxyServer) HandleProxy(c *gin.Context) {
 		logrus.WithField("error", utils.SanitizeText(closeErr.Error())).Warn("Failed to close request body")
 	}
 
-	ps.executeRequestWithRetry(c, channelHandler, originalGroup, group, bodyBytes, startTime, 0)
+	// The retry budget is frozen from the group that serves the first attempt
+	// so no group reached later in an aggregate failover chain can extend or
+	// truncate the retries promised to this request.
+	requestRetryBudget := group.EffectiveConfig.MaxRetries
+	ps.executeRequestWithRetry(c, channelHandler, originalGroup, group, bodyBytes, startTime, 0, requestRetryBudget)
 }
 
 func (ps *ProxyServer) requestBodyReadLimit(originalGroup *models.Group, preferredHandler channel.ChannelProxy) (int64, error) {
@@ -358,6 +362,9 @@ func (ps *ProxyServer) prepareGroupAttempt(
 }
 
 // executeRequestWithRetry is the core recursive function for handling requests and retries.
+// retryBudget is the per-request retry limit frozen at request start; retries are
+// evaluated against it even when the failover chain crosses groups with different
+// max_retries overrides.
 func (ps *ProxyServer) executeRequestWithRetry(
 	c *gin.Context,
 	preferredHandler channel.ChannelProxy,
@@ -366,6 +373,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 	rawBodyBytes []byte,
 	startTime time.Time,
 	retryCount int,
+	retryBudget int,
 ) {
 	attempt, err := ps.prepareRequestAttempt(c, originalGroup, preferredGroup, preferredHandler, rawBodyBytes, retryCount)
 	if err != nil {
@@ -517,7 +525,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			statusCode = transportFailureStatus(hasClassifier)
 			errorMessage = utils.SanitizeKnownSecrets(err.Error(), apiKey.KeyValue)
 			parsedError = errorMessage
-			logrus.Debugf("Request failed (attempt %d/%d) for key %s: %s", retryCount+1, cfg.MaxRetries, keyIdentifier, errorMessage)
+			logrus.Debugf("Request failed (attempt %d/%d) for key %s: %s", retryCount+1, retryBudget+1, keyIdentifier, errorMessage)
 		} else {
 			statusCode = resp.StatusCode
 			errorBodyLimit := int64(64 << 10)
@@ -544,7 +552,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 				removeRepresentationIntegrityHeaders(resp.Header)
 				resp.ContentLength = -1
 			}
-			logrus.Debugf("Request failed with status %d (attempt %d/%d) for key %s. Parsed Error: %s", statusCode, retryCount+1, cfg.MaxRetries, keyIdentifier, parsedError)
+			logrus.Debugf("Request failed with status %d (attempt %d/%d) for key %s. Parsed Error: %s", statusCode, retryCount+1, retryBudget+1, keyIdentifier, parsedError)
 		}
 
 		policy := group.ErrorPolicy
@@ -565,9 +573,9 @@ func (ps *ProxyServer) executeRequestWithRetry(
 
 		shouldRetry := false
 		if hasClassifier {
-			shouldRetry = shouldRetryClassifiedAttempt(classification, decision, retryCount, cfg.MaxRetries)
+			shouldRetry = shouldRetryClassifiedAttempt(classification, decision, retryCount, retryBudget)
 		} else {
-			shouldRetry = decision.OnRequest == errorpolicy.RequestActionRetryOtherKey && retryCount < cfg.MaxRetries
+			shouldRetry = decision.OnRequest == errorpolicy.RequestActionRetryOtherKey && retryCount < retryBudget
 		}
 		if shouldRetry && !hasClassifier {
 			if guard, ok := channelHandler.(channel.RetryGuard); ok && !guard.AllowRetry(c.Request.Method, statusCode, err) {
@@ -630,7 +638,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 			}
 		}
 		ps.logRequest(c, originalGroup, group, apiKey, startTime, statusCode, errors.New(parsedError), isStream, upstreamURL, channelHandler, bodyBytes, models.RequestTypeRetry)
-		ps.executeRequestWithRetry(c, retryHandler, originalGroup, retryGroup, rawBodyBytes, startTime, retryCount+1)
+		ps.executeRequestWithRetry(c, retryHandler, originalGroup, retryGroup, rawBodyBytes, startTime, retryCount+1, retryBudget)
 		return
 	}
 
