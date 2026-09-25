@@ -161,7 +161,7 @@ var MessagesJaJP = map[string]string{
 	"config.max_idle_conns_per_host":      "ホストごとの最大アイドル接続数",
 	"config.max_idle_conns_per_host_desc": "HTTPクライアント接続プールで各上流ホストに許可される最大アイドル接続数。",
 	"config.proxy_url":                    "プロキシサーバーURL",
-	"config.proxy_url_desc":               "グローバルHTTP/HTTPSプロキシサーバーURL。例：http://user:pass@host:port。空の場合は環境変数設定を使用。",
+	"config.proxy_url_desc":               "HTTP/HTTPSフォワードプロキシURL。例：https://Default.${API_KEY_FINGERPRINT}:token@host:443。指紋変数は選択された上流キーごとに解決され、プロキシのユーザー名でのみ使用できます。空欄では環境変数を使用します。",
 	"config.error_policy":                 "エラー処理ポリシー",
 	"config.error_policy_desc":            "HTTPステータスコードごとのリクエスト処理とキーの健全性処理を設定します。直接返却、別キーで再試行、キーに影響なし、失敗回数加算、一時クールダウン、即時無効化を選択できます。",
 

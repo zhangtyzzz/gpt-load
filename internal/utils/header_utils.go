@@ -42,14 +42,7 @@ func ResolveHeaderVariables(value string, ctx *HeaderVariableContext) string {
 
 	if ctx.APIKey != nil {
 		variables["${API_KEY}"] = ctx.APIKey.KeyValue
-		fingerprint := KeyFingerprint(ctx.APIKey.KeyHash)
-		plainHash := sha256.Sum256([]byte(ctx.APIKey.KeyValue))
-		if fingerprint == "" || strings.EqualFold(ctx.APIKey.KeyHash, hex.EncodeToString(plainHash[:])) {
-			// Without an encryption key, KeyHash is plain SHA-256. Use the
-			// database ID so a weak credential cannot be guessed offline.
-			fingerprint = "key-id:" + strconv.FormatUint(uint64(ctx.APIKey.ID), 10)
-		}
-		variables["${API_KEY_FINGERPRINT}"] = fingerprint
+		variables["${API_KEY_FINGERPRINT}"] = APIKeyFingerprint(ctx.APIKey)
 	}
 
 	// Replace variables in the value
@@ -58,6 +51,23 @@ func ResolveHeaderVariables(value string, ctx *HeaderVariableContext) string {
 	}
 
 	return result
+}
+
+// APIKeyFingerprint returns the non-reversible routing identity for an
+// upstream key. Keep proxy authentication and custom headers on the same
+// identity so changing access mode does not change account affinity.
+func APIKeyFingerprint(apiKey *models.APIKey) string {
+	if apiKey == nil {
+		return ""
+	}
+	fingerprint := KeyFingerprint(apiKey.KeyHash)
+	plainHash := sha256.Sum256([]byte(apiKey.KeyValue))
+	if fingerprint == "" || strings.EqualFold(apiKey.KeyHash, hex.EncodeToString(plainHash[:])) {
+		// Without an encryption key, KeyHash is plain SHA-256. Use the
+		// database ID so a weak credential cannot be guessed offline.
+		return "key-id:" + strconv.FormatUint(uint64(apiKey.ID), 10)
+	}
+	return fingerprint
 }
 
 // ApplyHeaderRules applies header rules to the HTTP request

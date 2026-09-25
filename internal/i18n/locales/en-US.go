@@ -161,7 +161,7 @@ var MessagesEnUS = map[string]string{
 	"config.max_idle_conns_per_host":      "Max Idle Connections Per Host",
 	"config.max_idle_conns_per_host_desc": "Maximum number of idle connections allowed per upstream host in the HTTP client connection pool.",
 	"config.proxy_url":                    "Proxy Server URL",
-	"config.proxy_url_desc":               "Global HTTP/HTTPS proxy server URL, e.g., http://user:pass@host:port. If empty, uses environment variable configuration.",
+	"config.proxy_url_desc":               "HTTP/HTTPS forward proxy URL, e.g. https://Default.${API_KEY_FINGERPRINT}:token@host:443. The fingerprint resolves per selected upstream key and is supported only in the proxy username. Empty uses the environment.",
 	"config.error_policy":                 "Error Handling Policy",
 	"config.error_policy_desc":            "Configures request handling and key health behavior for HTTP status codes. Choose direct return, retry with another key, no key impact, failure counting, temporary cooldown, or immediate disable.",
 

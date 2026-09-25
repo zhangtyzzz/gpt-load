@@ -1,16 +1,31 @@
 package httpclient
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"gpt-load/internal/utils"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
+
+const proxyIdentityVariable = "${API_KEY_FINGERPRINT}"
+const proxyIdentitySentinel = "gpt-load-proxy-identity-placeholder"
+
+type proxyIdentityContextKey struct{}
+
+// WithProxyIdentity binds a non-reversible upstream-key identity to one
+// outbound request. The identity is used only for proxy authentication; it is
+// never added to the end-to-end request headers.
+func WithProxyIdentity(ctx context.Context, identity string) context.Context {
+	return context.WithValue(ctx, proxyIdentityContextKey{}, identity)
+}
 
 // Config defines the parameters for creating an HTTP client.
 // This struct is used to generate a unique fingerprint for client reuse.
@@ -88,13 +103,7 @@ func (m *HTTPClientManager) GetClient(config *Config) *http.Client {
 
 	// Set http proxy.
 	if config.ProxyURL != "" {
-		proxyURL, err := url.Parse(config.ProxyURL)
-		if err != nil {
-			logrus.Warnf("Invalid proxy URL '%s' provided, falling back to environment settings: %s", utils.SanitizeText(config.ProxyURL), utils.SanitizeText(err.Error()))
-			transport.Proxy = http.ProxyFromEnvironment
-		} else {
-			transport.Proxy = http.ProxyURL(proxyURL)
-		}
+		transport.Proxy = proxyForConfig(config.ProxyURL)
 	} else {
 		transport.Proxy = http.ProxyFromEnvironment
 	}
@@ -107,6 +116,52 @@ func (m *HTTPClientManager) GetClient(config *Config) *http.Client {
 
 	m.clients[fingerprint] = newClient
 	return newClient
+}
+
+func proxyForConfig(rawURL string) func(*http.Request) (*url.URL, error) {
+	if !strings.Contains(rawURL, proxyIdentityVariable) {
+		proxyURL, err := url.Parse(rawURL)
+		if err != nil {
+			logrus.Warnf("Invalid proxy URL '%s' provided, falling back to environment settings: %s", utils.SanitizeText(rawURL), utils.SanitizeText(err.Error()))
+			return http.ProxyFromEnvironment
+		}
+		return http.ProxyURL(proxyURL)
+	}
+
+	// Parse with a safe sentinel because net/url rejects braces in userinfo.
+	// Only the username may be dynamic. The proxy host, password and path stay
+	// fixed for the life of the shared transport.
+	parsed, err := url.Parse(strings.ReplaceAll(rawURL, proxyIdentityVariable, proxyIdentitySentinel))
+	if err != nil || parsed.User == nil || strings.Count(rawURL, proxyIdentityVariable) != 1 ||
+		!strings.Contains(parsed.User.Username(), proxyIdentitySentinel) ||
+		parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return func(*http.Request) (*url.URL, error) {
+			return nil, errors.New("invalid dynamic proxy URL")
+		}
+	}
+
+	username := parsed.User.Username()
+	password, hasPassword := parsed.User.Password()
+	return func(req *http.Request) (*url.URL, error) {
+		identity, _ := req.Context().Value(proxyIdentityContextKey{}).(string)
+		if identity == "" {
+			// Fail closed: falling back to a direct connection would expose the
+			// host IP and defeat the operator's explicit proxy configuration.
+			return nil, errors.New("proxy identity unavailable")
+		}
+		// HTTP Basic authentication uses the first colon to separate username
+		// from password. Fingerprints use a colon in their display form, so use
+		// a transport-safe separator in the proxy username.
+		identity = strings.ReplaceAll(identity, ":", "-")
+		proxyURL := *parsed
+		resolvedUsername := strings.Replace(username, proxyIdentitySentinel, identity, 1)
+		if hasPassword {
+			proxyURL.User = url.UserPassword(resolvedUsername, password)
+		} else {
+			proxyURL.User = url.User(resolvedUsername)
+		}
+		return &proxyURL, nil
+	}
 }
 
 // sensitiveProxyHeaders are custom-named credential headers that proxy channels
