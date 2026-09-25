@@ -1324,6 +1324,8 @@ defineExpose({
                       <br />
                       • ${API_KEY} - {{ t("keys.apiKeyVar") }}
                       <br />
+                      • ${API_KEY_FINGERPRINT} - {{ t("keys.apiKeyFingerprintVar") }}
+                      <br />
                       • ${TIMESTAMP_MS} - {{ t("keys.timestampMsVar") }}
                       <br />
                       • ${TIMESTAMP_S} - {{ t("keys.timestampSVar") }}

@@ -371,6 +371,7 @@ export default {
     clientIpVar: "クライアントIPアドレス",
     groupNameVar: "グループ名",
     apiKeyVar: "現在のAPIキー",
+    apiKeyFingerprintVar: "現在のAPIキーの不可逆フィンガープリント",
     timestampMsVar: "ミリ秒タイムスタンプ",
     timestampSVar: "秒タイムスタンプ",
     header: "ヘッダー",
