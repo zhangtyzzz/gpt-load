@@ -156,9 +156,6 @@
 
   --selected-tag-bg: #ffffff;
   --selected-tag-text: #171717;
-  --selected-tag-success-text: #1c7a62;
-  --selected-tag-warning-text: #ab570a;
-  --selected-tag-info-text: #0761d1;
   --selected-tag-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 
   --border-radius-sm: 6px;
@@ -192,8 +189,5 @@
 
   --selected-tag-bg: #1a1a1a;
   --selected-tag-text: #ededed;
-  --selected-tag-success-text: #56d4ac;
-  --selected-tag-warning-text: #ffc043;
-  --selected-tag-info-text: #3291ff;
   --selected-tag-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }

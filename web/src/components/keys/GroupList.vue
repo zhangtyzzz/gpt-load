@@ -3,6 +3,7 @@ import { keysApi } from "@/api/keys";
 import type { Group } from "@/types/models";
 import { getGroupDisplayName } from "@/utils/display";
 import { Add, LinkOutline, Search } from "@vicons/ionicons5";
+import { ArrowLeftRight, Bot, Brain, Gem, Layers, Wrench } from "@lucide/vue";
 import { NButton, NCard, NEmpty, NIcon, NInput, NSpin, NTag } from "naive-ui";
 import { computed, onBeforeUpdate, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -121,18 +122,22 @@ function handleGroupClick(group: Group) {
   emit("group-select", group);
 }
 
-// 获取渠道类型的标签颜色
-function getChannelTagType(channelType: string) {
-  switch (channelType) {
+// 渠道类型是分类标识而非运行状态，按功能配色原则统一用中性图标与灰色标签
+function getChannelIcon(group: { group_type?: string; channel_type: string }) {
+  if (group.group_type === "aggregate") {
+    return Layers;
+  }
+  switch (group.channel_type) {
     case "openai":
+      return Bot;
     case "openai-response":
-      return "success";
+      return ArrowLeftRight;
     case "gemini":
-      return "info";
+      return Gem;
     case "anthropic":
-      return "warning";
+      return Brain;
     default:
-      return "default";
+      return Wrench;
   }
 }
 
@@ -423,20 +428,15 @@ defineExpose({ openCreateGroupModal });
                 @keydown.up.stop.prevent="handleKeyboardReorder(group.id, -1)"
                 @keydown.down.stop.prevent="handleKeyboardReorder(group.id, 1)"
               >
-                <span v-if="group.group_type === 'aggregate'">🔗</span>
-                <span v-else-if="group.channel_type === 'openai'">🤖</span>
-                <span v-else-if="group.channel_type === 'openai-response'">🔁</span>
-                <span v-else-if="group.channel_type === 'gemini'">💎</span>
-                <span v-else-if="group.channel_type === 'anthropic'">🧠</span>
-                <span v-else>🔧</span>
+                <n-icon
+                  :component="getChannelIcon(group)"
+                  :size="15"
+                  :stroke-width="1.75"
+                  aria-hidden="true"
+                />
               </button>
               <div v-else class="group-icon" aria-hidden="true">
-                <span v-if="group.group_type === 'aggregate'">🔗</span>
-                <span v-else-if="group.channel_type === 'openai'">🤖</span>
-                <span v-else-if="group.channel_type === 'openai-response'">🔁</span>
-                <span v-else-if="group.channel_type === 'gemini'">💎</span>
-                <span v-else-if="group.channel_type === 'anthropic'">🧠</span>
-                <span v-else>🔧</span>
+                <n-icon :component="getChannelIcon(group)" :size="15" :stroke-width="1.75" />
               </div>
               <button
                 type="button"
@@ -447,17 +447,10 @@ defineExpose({ openCreateGroupModal });
                 <div class="group-content">
                   <div class="group-name">{{ getGroupDisplayName(group) }}</div>
                   <div class="group-meta">
-                    <n-tag
-                      size="tiny"
-                      :type="getChannelTagType(group.channel_type)"
-                      :class="[
-                        'channel-tag',
-                        `channel-tag--${getChannelTagType(group.channel_type)}`,
-                      ]"
-                    >
+                    <n-tag size="tiny" class="channel-tag">
                       {{ group.channel_type }}
                     </n-tag>
-                    <n-tag v-if="group.group_type === 'aggregate'" size="tiny" type="warning" round>
+                    <n-tag v-if="group.group_type === 'aggregate'" size="tiny" round>
                       {{ t("keys.aggregateGroup") }}
                     </n-tag>
                     <span v-if="group.group_type !== 'aggregate'" class="group-id">
@@ -621,7 +614,7 @@ defineExpose({ openCreateGroupModal });
   border-color: transparent;
   background: var(--primary-color);
   box-shadow: none;
-  color: white;
+  color: var(--text-inverse);
 }
 
 .group-icon {
@@ -634,10 +627,9 @@ defineExpose({ openCreateGroupModal });
   box-sizing: border-box;
   border: 0;
   border-radius: 8px;
-  background: var(--bg-secondary);
-  color: inherit;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font: inherit;
-  font-size: 16px;
   user-select: none;
 }
 
@@ -703,18 +695,6 @@ button.group-icon:active,
   --channel-tag-selected-color: var(--selected-tag-text);
 }
 
-.channel-tag--success {
-  --channel-tag-selected-color: var(--selected-tag-success-text);
-}
-
-.channel-tag--warning {
-  --channel-tag-selected-color: var(--selected-tag-warning-text);
-}
-
-.channel-tag--info {
-  --channel-tag-selected-color: var(--selected-tag-info-text);
-}
-
 .group-item.active :deep(.channel-tag) {
   --n-border: 1px solid color-mix(in srgb, var(--channel-tag-selected-color) 38%, transparent) !important;
   --n-color: var(--selected-tag-bg) !important;
@@ -724,11 +704,12 @@ button.group-icon:active,
 }
 
 .group-item.active .group-icon {
-  background: color-mix(in srgb, white 20%, transparent);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  color: inherit;
 }
 
 .group-item.active .group-id {
-  color: white;
+  color: inherit;
   opacity: 0.9;
 }
 

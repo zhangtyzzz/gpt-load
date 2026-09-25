@@ -64,9 +64,13 @@ describe("GroupList visual state contracts", () => {
     });
 
     expect(wrapper.findAll(".group-item")).toHaveLength(16);
-    expect(wrapper.find(".group-item.active .channel-tag--warning").exists()).toBe(true);
-    expect(wrapper.find(".channel-tag--success").exists()).toBe(true);
-    expect(wrapper.find(".channel-tag--info").exists()).toBe(true);
+    // Channel type is a classification label: neutral chips for every
+    // channel, no per-provider status colors.
+    expect(wrapper.findAll(".channel-tag").length).toBeGreaterThanOrEqual(16);
+    expect(wrapper.find(".channel-tag--success").exists()).toBe(false);
+    expect(wrapper.find(".channel-tag--info").exists()).toBe(false);
+    expect(wrapper.find(".channel-tag--warning").exists()).toBe(false);
+    expect(wrapper.find(".group-item.active .channel-tag").text()).toContain("anthropic");
     expect(wrapper.find('.group-select-control[aria-pressed="true"]').exists()).toBe(true);
     expect(wrapper.find(".groups-section--scrollable").exists()).toBe(true);
     expect(wrapper.findAllComponents(NButton)).toHaveLength(2);
@@ -84,7 +88,7 @@ describe("GroupList visual state contracts", () => {
     });
 
     expect(wrapper.find(".group-item.active").text()).toContain("#group-20");
-    expect(wrapper.find(".channel-tag--success").text()).toContain("openai-response");
+    expect(wrapper.find(".channel-tag").text()).toContain("openai-response");
     expect(wrapper.find(".groups-section--scrollable").exists()).toBe(false);
     expect(wrapper.findAllComponents(NButton)).toHaveLength(2);
   });
