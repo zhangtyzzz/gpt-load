@@ -6,6 +6,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
+    <script>
+      // Apply the persisted appearance before first paint so dark-mode users
+      // never flash the light canvas. Mirrors utils/theme.ts semantics.
+      (function () {
+        try {
+          var stored = localStorage.getItem("gpt-load-theme-mode");
+          var dark =
+            stored === "dark" ||
+            ((stored === null || stored === "auto") &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.add(dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.classList.add("light");
+        }
+      })();
+    </script>
     <title>GPT Load</title>
   </head>
   <body>
