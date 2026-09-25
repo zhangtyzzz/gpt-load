@@ -30,6 +30,17 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: "dist",
       assetsDir: "assets",
+      rollupOptions: {
+        output: {
+          // Split framework and component-library code out of the entry chunk:
+          // unchanged dependencies stay cached across releases and the app
+          // entry stays small.
+          manualChunks: {
+            "naive-ui": ["naive-ui"],
+            vendor: ["vue", "vue-router", "vue-i18n", "axios", "@vueuse/core"],
+          },
+        },
+      },
     },
   };
 });
