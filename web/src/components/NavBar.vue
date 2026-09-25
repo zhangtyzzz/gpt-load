@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChartOutline, KeyOutline, ListOutline, SettingsOutline } from "@vicons/ionicons5";
+import { KeyRound, ScrollText, Settings2, House } from "@lucide/vue";
 import { NIcon, NMenu, type MenuOption } from "naive-ui";
 import { computed, h, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
@@ -13,42 +13,23 @@ const emit = defineEmits<{ close: [] }>();
 const route = useRoute();
 const activeMenu = computed(() => String(route.name || "dashboard"));
 
-const sections = [
-  {
-    key: "overview",
-    label: "nav.section.overview",
-    items: [{ key: "dashboard", label: "nav.dashboard", icon: BarChartOutline }],
-  },
-  {
-    key: "management",
-    label: "nav.section.management",
-    items: [
-      { key: "keys", label: "nav.keys", icon: KeyOutline },
-      { key: "logs", label: "nav.logs", icon: ListOutline },
-    ],
-  },
-  {
-    key: "system",
-    label: "nav.section.system",
-    items: [{ key: "settings", label: "nav.settings", icon: SettingsOutline }],
-  },
+const items = [
+  { key: "dashboard", label: "nav.dashboard", icon: House },
+  { key: "keys", label: "nav.keys", icon: KeyRound },
+  { key: "logs", label: "nav.logs", icon: ScrollText },
+  { key: "settings", label: "nav.settings", icon: Settings2 },
 ] as const;
 
 const menuOptions = computed<MenuOption[]>(() =>
-  sections.map(section => ({
-    key: section.key,
-    type: "group" as const,
-    label: () => t(section.label),
-    children: section.items.map(item => ({
-      key: item.key,
-      icon: () => h(NIcon, { component: item.icon, size: 17 }),
-      label: () =>
-        h(
-          RouterLink,
-          { to: { name: item.key }, class: "nav-menu-item" },
-          { default: () => t(item.label) }
-        ),
-    })),
+  items.map(item => ({
+    key: item.key,
+    icon: () => h(NIcon, { component: item.icon, size: 17, "stroke-width": 1.75 }),
+    label: () =>
+      h(
+        RouterLink,
+        { to: { name: item.key }, class: "nav-menu-item" },
+        { default: () => t(item.label) }
+      ),
   }))
 );
 
@@ -95,7 +76,7 @@ watch(activeMenu, () => {
 
 :deep(.n-menu-item-content--selected .n-menu-item-content-header),
 :deep(.n-menu-item-content--selected .n-menu-item-content__icon) {
-  color: var(--primary-color) !important;
+  color: var(--text-primary) !important;
 }
 
 :deep(.n-menu-item-content-header) {
@@ -106,15 +87,6 @@ watch(activeMenu, () => {
   color: var(--text-secondary);
 }
 
-:deep(.n-menu-item-group-title) {
-  padding: 14px 0.75rem 5px !important;
-  color: var(--text-tertiary);
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 :deep(.nav-menu-item) {
   color: inherit;
   font-size: 0.85rem;
@@ -122,9 +94,19 @@ watch(activeMenu, () => {
   text-decoration: none;
 }
 
-:deep(.n-menu--horizontal .n-menu-item),
+:deep(.n-menu--horizontal) {
+  padding: 3px;
+  border: 1px solid var(--border-color-light);
+  border-radius: 8px;
+  background: var(--card-bg-solid);
+}
+
+:deep(.n-menu--horizontal .n-menu-item) {
+  margin-bottom: 0 !important;
+}
+
 :deep(.n-menu--horizontal .n-menu-item-content) {
-  border-radius: 6px !important;
+  min-height: 34px;
 }
 
 :deep(.n-menu--vertical) {

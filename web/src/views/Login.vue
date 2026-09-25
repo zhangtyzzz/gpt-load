@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppFooter from "@/components/AppFooter.vue";
+import BrandMark from "@/components/BrandMark.vue";
 import LanguageSelector from "@/components/LanguageSelector.vue";
 import ThemeToggle from "@/components/ThemeToggle.vue";
 import { useAuthService } from "@/services/auth";
@@ -41,7 +42,7 @@ const handleLogin = async () => {
       <div class="login-panel surface-card">
         <div class="panel-brand">
           <span class="brand-logo" aria-hidden="true">
-            <img src="@/assets/logo-256.png" alt="" />
+            <brand-mark :size="34" />
           </span>
           <strong>GPT Load</strong>
         </div>
@@ -141,17 +142,8 @@ const handleLogin = async () => {
   display: grid;
   width: 2.4rem;
   height: 2.4rem;
-  overflow: hidden;
   place-items: center;
-  border: 1px solid var(--border-color-light);
-  border-radius: 9px;
-  background: var(--card-bg-solid);
-}
-
-.brand-logo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  color: var(--text-primary);
 }
 
 .panel-icon {
@@ -172,8 +164,9 @@ const handleLogin = async () => {
 .panel-heading h2 {
   color: var(--text-primary);
   font-size: 1.3rem;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.03em;
+  text-wrap: balance;
 }
 
 .panel-heading p {

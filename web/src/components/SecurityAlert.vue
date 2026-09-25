@@ -207,18 +207,6 @@ const openSecurityDocs = () => {
   font-weight: 500;
 }
 
-/* 暗黑模式下的按钮优化 */
-:root.dark .security-primary-btn {
-  background: var(--primary-color) !important;
-  color: white !important;
-  border: 1px solid var(--primary-color) !important;
-}
-
-:root.dark .security-primary-btn:hover {
-  background: var(--primary-color-hover) !important;
-  border-color: var(--primary-color-hover) !important;
-}
-
 :root.dark .security-secondary-btn {
   background: rgba(255, 255, 255, 0.1) !important;
   color: var(--text-primary) !important;

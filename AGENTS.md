@@ -73,37 +73,39 @@ tool, so clarity and control come before decoration.
 
 ## Interface system
 
-The console follows the design language migrated from the upstream v2
-console: warm neutrals with a coral action color, flat bordered panels, and a
-left sidebar shell. Restraint and craft still govern; the migration changed
-the palette and shell, not the discipline.
+The console follows a Geist-derived design language (Vercel's public design
+system): monochrome ink-on-white precision with hairline borders, flat
+bordered panels, blue reserved for links and information, and the Geist type
+family. Vercel's web interface guidelines are the review checklist.
 
 ### Visual foundations
 
-- Define reusable color, spacing, radius, shadow, typography, and motion tokens
-  centrally under `web/src/assets/variables.css`, `web/src/theme/naive.ts`, and
-  `web/src/assets/style.css`.
-- The palette is warm neutral. Light: page canvas `#f7f7f5`, sidebar `#f0f0ed`,
-  surface `#ffffff`, border `#e4e4df`, text `#1c1c1b`/`#6c6c67`, action color
-  coral `#ff4f1f` with soft tint `#fff3ed`. Chart series stay fixed: input
-  `#527eb2`, cache `#318d91`, write `#b38b46`, output `#8b72b0`.
-- Normal panels are flat: a 1px border, 10px panel radius, 8px control radius,
-  and no shadow. Shadows are reserved for floating layers such as menus,
-  dialogs, tooltips, and the skip link.
-- The shell is a 240px left sidebar with grouped navigation (uppercase section
-  labels, coral active pill) plus a slim 56px topbar holding session controls;
-  below 820px the sidebar collapses into a right drawer. The wide workspace
-  has no global max-width.
-- Use the platform system font stack including CJK fallbacks (PingFang SC,
-  Hiragino Sans GB, Microsoft YaHei) and enable optical sizing. Tighten
-  tracking only for large headings; small labels may use uppercase tracking.
-- Use translucent material only for floating chrome such as the sticky topbar,
-  popovers, and sheets. Data cards and dense tables use stable solid surfaces
-  for legibility.
-- Support light and dark appearance from the same semantic tokens; dark maps to
-  the warm dark palette (canvas `#202020`, sidebar `#181818`, surface `#272727`,
-  text `#f5f5f2`, accent `#ff845e`, action stays `#ff4f1f`). Do not copy raw
-  light-mode colors into component files.
+- Define reusable color, spacing, radius, shadow, shadow, typography, and
+  motion tokens centrally under `web/src/assets/variables.css`,
+  `web/src/theme/naive.ts`, and `web/src/assets/style.css`.
+- Light: page canvas `#fafafa`, surface `#ffffff`, hairline `#ebebeb`, ink
+  `#171717`, secondary text `#4d4d4d`, muted `#888888`. Dark: canvas `#000000`,
+  surface `#0a0a0a`, hairline `#333333`, text `#ededed`. Primary actions are
+  ink-on-white in light and white-on-black in dark; never a colored brand
+  button.
+- Blue `#0070f3` (light) / `#3291ff` (dark) is reserved for links, focus
+  rings, and informational states. Status colors: success `#29a383`, warning
+  `#f5a623`, error `#ee0000`. Chart series: input `#0070f3`, cache `#29bc9b`,
+  write `#f5a623`, output `#7928ca`.
+- Typography is Geist (self-hosted via Fontsource) with CJK system fallbacks;
+  Geist Mono for code and metrics. Tight tracking on headings, `tabular-nums`
+  for number columns, `text-wrap: balance` on headings.
+- Normal panels are flat: 1px hairline border, 6px control / 8px panel radius,
+  no shadow. Layered soft shadows are reserved for floating layers (menus,
+  dialogs, tooltips, the skip link).
+- The shell is a slim sticky topbar (brand mark + horizontal navigation +
+  session controls); below 820px the navigation collapses into a right drawer.
+  Content keeps a 1440px cap.
+- The brand mark is the monochrome ink square with the load line
+  (`web/src/components/BrandMark.vue`, favicon at `web/public/favicon.svg`);
+  navigation uses lucide line icons at 1.75 stroke.
+- Do not copy raw light-mode colors into component files; dark derives from
+  the same semantic tokens.
 - Avoid decorative gradients, gratuitous glow, decorative noise, or visual
   effects unrelated to system state.
 - Prefer deliberate whitespace and alignment over adding borders between every
