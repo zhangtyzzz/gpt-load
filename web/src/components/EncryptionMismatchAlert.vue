@@ -244,54 +244,18 @@ docker compose run --rm gpt-load migrate-keys --from "old-key"</pre
 <style scoped>
 /* 解决方案内容背景 */
 .solution-content {
-  background: #f7f9fc;
-  border: 1px solid #e1e4e8;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-light);
 }
 
-/* 浅色模式下的代码块 */
+/* 代码块 */
 .solution-content pre {
-  background: #f0f2f5;
-  border: 1px solid #d6dae0;
-}
-
-/* 暗黑模式下的解决方案背景 */
-:root.dark .solution-content {
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* 暗黑模式下的代码块 */
-:root.dark .solution-content pre {
-  background: #0d0d0d !important;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--code-bg);
+  border: 1px solid var(--border-color-light);
 }
 
 /* 按钮样式 */
 .encryption-docs-btn {
   font-weight: 600;
-}
-
-/* 暗黑模式下的按钮优化 */
-:root.dark .encryption-docs-btn {
-  background: #d32f2f !important;
-  color: white !important;
-  border: none !important;
-}
-
-:root.dark .encryption-docs-btn:hover {
-  background: #b71c1c !important;
-  color: white !important;
-}
-
-/* 亮色模式下的按钮 */
-:root:not(.dark) .encryption-docs-btn {
-  background: #d32f2f !important;
-  color: white !important;
-  border: none !important;
-}
-
-:root:not(.dark) .encryption-docs-btn:hover {
-  background: #b71c1c !important;
-  color: white !important;
 }
 </style>

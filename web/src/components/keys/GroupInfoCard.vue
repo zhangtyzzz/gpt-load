@@ -685,9 +685,7 @@ function resetPage() {
                     :label="`${t('keys.aggregateGroup')} ${index + 1}:`"
                   >
                     <span class="aggregate-weight">
-                      <n-tag size="small" type="info">
-                        {{ t("keys.weight") }}: {{ parent.weight }}
-                      </n-tag>
+                      <n-tag size="small">{{ t("keys.weight") }}: {{ parent.weight }}</n-tag>
                     </span>
                     <n-input
                       class="aggregate-name"
@@ -724,9 +722,7 @@ function resetPage() {
                     :label="`${t('keys.upstream')} ${index + 1}:`"
                   >
                     <span class="upstream-weight">
-                      <n-tag size="small" type="info">
-                        {{ t("keys.weight") }}: {{ upstream.weight }}
-                      </n-tag>
+                      <n-tag size="small">{{ t("keys.weight") }}: {{ upstream.weight }}</n-tag>
                     </span>
                     <n-input class="upstream-url" :value="upstream.url" readonly size="small" />
                   </n-form-item>

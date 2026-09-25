@@ -92,6 +92,10 @@ family. Vercel's web interface guidelines are the review checklist.
   rings, and informational states. Status colors: success `#29a383`, warning
   `#f5a623`, error `#ee0000`. Chart series: input `#0070f3`, cache `#29bc9b`,
   write `#f5a623`, output `#7928ca`.
+- Functional color carries meaning only: status colors appear on statuses
+  (health pills, trend deltas, log outcomes) and never decorate
+  classifications. Channel types, weights, and other identity labels use
+  neutral gray chips; channel identity icons are monochrome lucide marks.
 - Typography is Geist (self-hosted via Fontsource) with CJK system fallbacks;
   Geist Mono for code and metrics. Tight tracking on headings, `tabular-nums`
   for number columns, `text-wrap: balance` on headings.

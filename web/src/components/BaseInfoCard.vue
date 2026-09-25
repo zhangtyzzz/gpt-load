@@ -35,6 +35,14 @@ const formatTrend = (trend: number): string => {
   return `${sign}${trend.toFixed(1)}%`;
 };
 
+// 零变化是噪声而非成功，中性灰展示；只有真实变化才着语义色
+const trendTagType = (trend: number | undefined, isGood: boolean | undefined) => {
+  if (trend === undefined || Math.abs(trend) < 0.05) {
+    return "default";
+  }
+  return isGood ? "success" : "error";
+};
+
 const updateAnimatedValues = () => {
   if (stats.value) {
     const totalKeys = (stats.value.key_count?.value ?? 0) + (stats.value.key_count?.sub_value ?? 0);
@@ -101,7 +109,7 @@ watch(stats, updateAnimatedValues, { immediate: true });
               </div>
               <n-tag
                 v-if="stats?.rpm && stats.rpm.trend !== undefined"
-                :type="stats?.rpm.trend_is_growth ? 'success' : 'error'"
+                :type="trendTagType(stats.rpm.trend, stats.rpm.trend_is_growth)"
                 size="small"
                 class="stat-trend"
               >
@@ -136,7 +144,7 @@ watch(stats, updateAnimatedValues, { immediate: true });
               </div>
               <n-tag
                 v-if="stats?.request_count && stats.request_count.trend !== undefined"
-                :type="stats?.request_count.trend_is_growth ? 'success' : 'error'"
+                :type="trendTagType(stats.request_count.trend, stats.request_count.trend_is_growth)"
                 size="small"
                 class="stat-trend"
               >
@@ -171,7 +179,7 @@ watch(stats, updateAnimatedValues, { immediate: true });
               </div>
               <n-tag
                 v-if="stats?.error_rate.trend !== 0"
-                :type="stats?.error_rate.trend_is_growth ? 'success' : 'error'"
+                :type="trendTagType(stats?.error_rate.trend, stats?.error_rate.trend_is_growth)"
                 size="small"
                 class="stat-trend"
               >
@@ -248,10 +256,6 @@ watch(stats, updateAnimatedValues, { immediate: true });
   background: var(--bg-tertiary);
 }
 
-.error-icon {
-  background: var(--success-bg);
-}
-
 .stat-trend {
   font-weight: 600;
 }
@@ -307,7 +311,7 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .rpm-bar {
-  background: #b87408;
+  background: var(--chart-series-write);
 }
 
 .request-bar {
