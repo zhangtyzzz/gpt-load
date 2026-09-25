@@ -24,8 +24,8 @@ current development line and awaits prerelease validation.
 - Establish the console theme, navigation, responsive shell, empty
   states, settings dirty protection, and accessibility baseline; the visual
   system now follows the design language migrated from the upstream v2
-  console (warm neutrals, coral action color, flat bordered panels, grouped
-  sidebar navigation).
+  console (warm neutrals, coral action color, flat bordered panels, top
+  navigation with the coral anchor brand).
 - Add repository-level engineering and interface rules in `AGENTS.md`.
 
 Exit criteria:

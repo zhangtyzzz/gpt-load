@@ -34,6 +34,9 @@
     "check-all": "npm run lint:check && npm run format:check && npm run type-check && npm run test:unit"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@lucide/vue": "^1.48.0",
     "@vicons/ionicons5": "^0.13.0",
     "@vueuse/core": "^13.6.0",
     "axios": "^1.19.0",

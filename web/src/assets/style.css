@@ -2,8 +2,7 @@
 
 :root {
   overflow-y: auto;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   font-size: 100%;
   line-height: 1.5;
   font-weight: 400;
@@ -46,7 +45,7 @@ a,
 }
 
 a {
-  color: var(--primary-color);
+  color: var(--link-color);
 }
 
 #app {
@@ -71,10 +70,11 @@ a {
 
 .page-title {
   color: var(--text-primary);
-  font-size: clamp(1.4rem, 2.4vw, 1.6rem);
-  font-weight: 650;
-  letter-spacing: -0.035em;
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
   line-height: 1.2;
+  text-wrap: balance;
 }
 
 .page-description {
@@ -181,8 +181,8 @@ body .global-message-container.n-message-container--top-right {
 }
 
 ::selection {
-  background: rgba(255, 79, 31, 0.18);
-  color: var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-primary);
 }
 
 *:focus {

@@ -1,4 +1,6 @@
 import App from "@/App.vue";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "@/assets/style.css";
 import router from "@/router";
 import i18n from "@/locales";

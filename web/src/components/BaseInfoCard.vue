@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DashboardStatsResponse } from "@/types/models";
-import { NCard, NGrid, NGridItem, NSpace, NTag, NTooltip } from "naive-ui";
+import { Gauge, KeyRound, ShieldCheck, TrendingUp } from "@lucide/vue";
+import { NCard, NGrid, NGridItem, NIcon, NSpace, NTag, NTooltip } from "naive-ui";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -60,7 +61,9 @@ watch(stats, updateAnimatedValues, { immediate: true });
         <n-grid-item span="1">
           <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
-              <div class="stat-icon key-icon">🔑</div>
+              <div class="stat-icon key-icon">
+                <n-icon :component="KeyRound" :size="19" :stroke-width="1.75" />
+              </div>
               <n-tooltip v-if="stats?.key_count.sub_value" trigger="hover">
                 <template #trigger>
                   <n-tag type="error" size="small" class="stat-trend">
@@ -93,7 +96,9 @@ watch(stats, updateAnimatedValues, { immediate: true });
         <n-grid-item span="1">
           <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
-              <div class="stat-icon rpm-icon">⏱️</div>
+              <div class="stat-icon rpm-icon">
+                <n-icon :component="Gauge" :size="19" :stroke-width="1.75" />
+              </div>
               <n-tag
                 v-if="stats?.rpm && stats.rpm.trend !== undefined"
                 :type="stats?.rpm.trend_is_growth ? 'success' : 'error'"
@@ -126,7 +131,9 @@ watch(stats, updateAnimatedValues, { immediate: true });
         <n-grid-item span="1">
           <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
-              <div class="stat-icon request-icon">📈</div>
+              <div class="stat-icon request-icon">
+                <n-icon :component="TrendingUp" :size="19" :stroke-width="1.75" />
+              </div>
               <n-tag
                 v-if="stats?.request_count && stats.request_count.trend !== undefined"
                 :type="stats?.request_count.trend_is_growth ? 'success' : 'error'"
@@ -159,7 +166,9 @@ watch(stats, updateAnimatedValues, { immediate: true });
         <n-grid-item span="1">
           <n-card :bordered="false" class="stat-card">
             <div class="stat-header">
-              <div class="stat-icon error-icon">🛡️</div>
+              <div class="stat-icon error-icon">
+                <n-icon :component="ShieldCheck" :size="19" :stroke-width="1.75" />
+              </div>
               <n-tag
                 v-if="stats?.error_rate.trend !== 0"
                 :type="stats?.error_rate.trend_is_growth ? 'success' : 'error'"
@@ -228,20 +237,15 @@ watch(stats, updateAnimatedValues, { immediate: true });
   align-items: center;
   justify-content: center;
   font-size: 1.4rem;
-  background: var(--primary-color-suppl);
-  color: var(--primary-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
-.key-icon {
-  background: var(--accent-soft);
-}
-
-.rpm-icon {
-  background: rgba(184, 116, 8, 0.12);
-}
-
-.request-icon {
-  background: rgba(55, 125, 226, 0.12);
+.key-icon,
+.rpm-icon,
+.request-icon,
+.error-icon {
+  background: var(--bg-tertiary);
 }
 
 .error-icon {
@@ -276,10 +280,10 @@ watch(stats, updateAnimatedValues, { immediate: true });
 }
 
 .stat-title {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
