@@ -1,10 +1,13 @@
 package utils
 
 import (
-	"gpt-load/internal/models"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"testing"
+
+	"gpt-load/internal/models"
 )
 
 func TestHeaderRulesUseKeyFingerprintWithoutExposingKey(t *testing.T) {
@@ -32,5 +35,15 @@ func TestHeaderFingerprintFallsBackToStableKeyID(t *testing.T) {
 	got := ResolveHeaderVariables("${API_KEY_FINGERPRINT}", NewHeaderVariableContext(nil, key))
 	if got != "key-id:27" {
 		t.Fatalf("fingerprint fallback = %q, want key-id:27", got)
+	}
+}
+
+func TestHeaderFingerprintDoesNotExposeUnkeyedHash(t *testing.T) {
+	const secret = "guessable-secret"
+	hash := sha256.Sum256([]byte(secret))
+	key := &models.APIKey{ID: 27, KeyValue: secret, KeyHash: hex.EncodeToString(hash[:])}
+	got := ResolveHeaderVariables("${API_KEY_FINGERPRINT}", NewHeaderVariableContext(nil, key))
+	if got != "key-id:27" {
+		t.Fatalf("unkeyed fingerprint = %q, want key-id:27", got)
 	}
 }

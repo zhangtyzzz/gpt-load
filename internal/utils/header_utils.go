@@ -1,11 +1,14 @@
 package utils
 
 import (
-	"gpt-load/internal/models"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"gpt-load/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,9 +43,10 @@ func ResolveHeaderVariables(value string, ctx *HeaderVariableContext) string {
 	if ctx.APIKey != nil {
 		variables["${API_KEY}"] = ctx.APIKey.KeyValue
 		fingerprint := KeyFingerprint(ctx.APIKey.KeyHash)
-		if fingerprint == "" {
-			// Keep the header safe for legacy keys whose hash has not been
-			// populated yet. A missing value must never resolve to API_KEY.
+		plainHash := sha256.Sum256([]byte(ctx.APIKey.KeyValue))
+		if fingerprint == "" || strings.EqualFold(ctx.APIKey.KeyHash, hex.EncodeToString(plainHash[:])) {
+			// Without an encryption key, KeyHash is plain SHA-256. Use the
+			// database ID so a weak credential cannot be guessed offline.
 			fingerprint = "key-id:" + strconv.FormatUint(uint64(ctx.APIKey.ID), 10)
 		}
 		variables["${API_KEY_FINGERPRINT}"] = fingerprint

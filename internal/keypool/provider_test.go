@@ -52,6 +52,44 @@ func TestSecureRandomDuration(t *testing.T) {
 	})
 }
 
+func TestSelectKeyPopulatesHashForHeaderFingerprint(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		encryptionKey string
+	}{
+		{name: "encrypted", encryptionKey: "strong-test-encryption-key-0123456789"},
+		{name: "unencrypted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encryptor, err := encryption.NewService(tc.encryptionKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const secret = "sk-upstream-credential"
+			stored, err := encryptor.Encrypt(secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			memory := store.NewMemoryStore()
+			provider := NewProvider(nil, memory, nil, encryptor, nil)
+			key := &models.APIKey{ID: 27, GroupID: 4, KeyValue: stored, Status: models.KeyStatusActive}
+			if err := memory.HSet("key:27", provider.apiKeyToMap(key)); err != nil {
+				t.Fatal(err)
+			}
+			if err := memory.LPush("group:4:active_keys", 27); err != nil {
+				t.Fatal(err)
+			}
+			selected, err := provider.SelectKey(4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if selected.KeyValue != secret || selected.KeyHash != encryptor.Hash(secret) {
+				t.Fatal("selected key does not carry the decrypted credential and its digest")
+			}
+		})
+	}
+}
+
 func TestLoadKeysFromDBRebuildsListsWithoutClearingTransientState(t *testing.T) {
 	t.Parallel()
 

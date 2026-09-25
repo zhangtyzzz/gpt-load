@@ -311,6 +311,9 @@ the same key on the same proxy account without sending the key itself as an
 account identifier. Custom upstream headers are inside an HTTPS `CONNECT`
 tunnel and cannot identify an account to a forward proxy; forward-proxy
 authentication requires a separate proxy transport configuration.
+With `ENCRYPTION_KEY` configured, the variable is a short prefix of a keyed
+HMAC-SHA256 digest. Without encryption, it uses the database key ID instead of
+an unkeyed hash, so exposing the header cannot aid offline key guessing.
 
 **Key Configuration:**
 

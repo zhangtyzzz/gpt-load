@@ -211,6 +211,7 @@ func (p *KeyProvider) getKeyByID(keyID uint) (*models.APIKey, error) {
 	return &models.APIKey{
 		ID:           uint(keyID),
 		KeyValue:     decryptedKeyValue,
+		KeyHash:      p.encryptionSvc.Hash(decryptedKeyValue),
 		Status:       keyDetails["status"],
 		FailureCount: failureCount,
 		GroupID:      uint(groupID),
