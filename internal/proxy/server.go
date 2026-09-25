@@ -16,6 +16,7 @@ import (
 	"gpt-load/internal/encryption"
 	"gpt-load/internal/errorpolicy"
 	app_errors "gpt-load/internal/errors"
+	"gpt-load/internal/httpclient"
 	"gpt-load/internal/keypool"
 	"gpt-load/internal/middleware"
 	"gpt-load/internal/models"
@@ -430,6 +431,7 @@ func (ps *ProxyServer) executeRequestWithRetry(
 		ctx, cancel = context.WithTimeout(c.Request.Context(), timeout)
 	}
 	defer cancel()
+	ctx = httpclient.WithProxyIdentity(ctx, utils.APIKeyFingerprint(apiKey))
 
 	req, err := http.NewRequestWithContext(ctx, c.Request.Method, upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {

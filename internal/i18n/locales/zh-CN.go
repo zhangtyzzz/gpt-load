@@ -161,7 +161,7 @@ var MessagesZhCN = map[string]string{
 	"config.max_idle_conns_per_host":      "每主机最大空闲连接数",
 	"config.max_idle_conns_per_host_desc": "HTTP 客户端连接池对每个上游主机允许的最大空闲连接数。",
 	"config.proxy_url":                    "代理服务器地址",
-	"config.proxy_url_desc":               "全局 HTTP/HTTPS 代理服务器地址，例如：http://user:pass@host:port。如果为空，则使用环境变量配置。",
+	"config.proxy_url_desc":               "HTTP/HTTPS 正向代理地址，例如：https://Default.${API_KEY_FINGERPRINT}:令牌@host:443。指纹变量按选中的上游 Key 解析，仅可用于代理用户名；留空时使用环境变量。",
 	"config.error_policy":                 "错误处理策略",
 	"config.error_policy_desc":            "配置不同 HTTP 状态码的请求处理和 Key 健康处理策略。可设置直接返回、换 Key 重试、不影响 Key、累计失败、临时冷却或立即禁用。",
 

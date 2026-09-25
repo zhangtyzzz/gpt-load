@@ -7,7 +7,9 @@ import (
 	"gpt-load/internal/channel"
 	"gpt-load/internal/config"
 	"gpt-load/internal/encryption"
+	"gpt-load/internal/httpclient"
 	"gpt-load/internal/models"
+	"gpt-load/internal/utils"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -58,6 +60,7 @@ func (s *KeyValidator) ValidateSingleKey(key *models.APIKey, group *models.Group
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(group.EffectiveConfig.KeyValidationTimeoutSeconds)*time.Second)
 	defer cancel()
+	ctx = httpclient.WithProxyIdentity(ctx, utils.APIKeyFingerprint(key))
 
 	ch, err := s.channelFactory.GetChannel(group)
 	if err != nil {

@@ -306,14 +306,19 @@ Supported Proxy Protocol Formats:
 
 Custom upstream header rules support `${API_KEY_FINGERPRINT}`, a stable,
 non-reversible identifier for the selected upstream key. For a reverse proxy
-that accepts an account header, set `X-Resin-Account` to this variable to keep
-the same key on the same proxy account without sending the key itself as an
-account identifier. Custom upstream headers are inside an HTTPS `CONNECT`
-tunnel and cannot identify an account to a forward proxy; forward-proxy
-authentication requires a separate proxy transport configuration.
+that accepts an account header, set `X-Resin-Account` to this variable. For an
+HTTP or HTTPS forward proxy, use the variable in the proxy URL username instead,
+for example `https://Default.${API_KEY_FINGERPRINT}:PROXY_TOKEN@proxy.example:443`.
+The proxy transport resolves it separately for each selected upstream key, so
+Resin receives usernames such as `Default.fp-123456789abc`. The colon in the
+display fingerprint becomes a hyphen because HTTP Basic usernames cannot
+contain a colon. Custom upstream headers travel inside the HTTPS `CONNECT`
+tunnel and are not proxy-authentication headers.
 With `ENCRYPTION_KEY` configured, the variable is a short prefix of a keyed
 HMAC-SHA256 digest. Without encryption, it uses the database key ID instead of
-an unkeyed hash, so exposing the header cannot aid offline key guessing.
+an unkeyed hash, so exposing the account cannot aid offline key guessing.
+The configured proxy URL remains visible to authenticated administrators; use a
+dedicated proxy token and limit administrative access accordingly.
 
 **Key Configuration:**
 
