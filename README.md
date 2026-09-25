@@ -304,6 +304,14 @@ Supported Proxy Protocol Formats:
 | Max Idle Connections Per Host | `max_idle_conns_per_host` | 50      | ✅             | Maximum idle connections per upstream host                          |
 | Proxy URL                     | `proxy_url`               | -       | ✅             | HTTP/HTTPS proxy for forwarding requests, uses environment if empty |
 
+Custom upstream header rules support `${API_KEY_FINGERPRINT}`, a stable,
+non-reversible identifier for the selected upstream key. For a reverse proxy
+that accepts an account header, set `X-Resin-Account` to this variable to keep
+the same key on the same proxy account without sending the key itself as an
+account identifier. Custom upstream headers are inside an HTTPS `CONNECT`
+tunnel and cannot identify an account to a forward proxy; forward-proxy
+authentication requires a separate proxy transport configuration.
+
 **Key Configuration:**
 
 | Setting                    | Field Name                        | Default | Group Override | Description                                                                |

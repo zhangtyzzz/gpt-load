@@ -39,6 +39,13 @@ func ResolveHeaderVariables(value string, ctx *HeaderVariableContext) string {
 
 	if ctx.APIKey != nil {
 		variables["${API_KEY}"] = ctx.APIKey.KeyValue
+		fingerprint := KeyFingerprint(ctx.APIKey.KeyHash)
+		if fingerprint == "" {
+			// Keep the header safe for legacy keys whose hash has not been
+			// populated yet. A missing value must never resolve to API_KEY.
+			fingerprint = "key-id:" + strconv.FormatUint(uint64(ctx.APIKey.ID), 10)
+		}
+		variables["${API_KEY_FINGERPRINT}"] = fingerprint
 	}
 
 	// Replace variables in the value

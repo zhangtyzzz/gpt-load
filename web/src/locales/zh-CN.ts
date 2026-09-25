@@ -359,6 +359,7 @@ export default {
     clientIpVar: "客户端IP地址",
     groupNameVar: "分组名称",
     apiKeyVar: "当前轮询的API密钥",
+    apiKeyFingerprintVar: "当前轮询密钥的不可逆指纹",
     timestampMsVar: "毫秒时间戳",
     timestampSVar: "秒时间戳",
     header: "请求头",
