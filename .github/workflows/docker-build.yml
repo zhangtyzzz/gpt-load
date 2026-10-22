@@ -283,7 +283,12 @@ jobs:
           export UPGRADE_GROUP_ID="$upgrade_group_id"
           export LEGACY_LOG_ID="release-smoke-legacy-log"
           export LEGACY_LOG_KEY="release-smoke-legacy-reversible-key-fixture"
-          sudo -E python3 - <<'PY'
+          sudo env \
+            UPGRADE_DB_PATH="$UPGRADE_DB_PATH" \
+            UPGRADE_GROUP_ID="$UPGRADE_GROUP_ID" \
+            LEGACY_LOG_ID="$LEGACY_LOG_ID" \
+            LEGACY_LOG_KEY="$LEGACY_LOG_KEY" \
+            python3 - <<'PY'
           import os
           import sqlite3
 
@@ -403,7 +408,10 @@ jobs:
             exit 1
           fi
 
-          sudo -E python3 - <<'PY'
+          sudo env \
+            UPGRADE_DB_PATH="$UPGRADE_DB_PATH" \
+            LEGACY_LOG_ID="$LEGACY_LOG_ID" \
+            python3 - <<'PY'
           import os
           import sqlite3
           import time
