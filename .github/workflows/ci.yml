@@ -32,7 +32,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.8"
+          go-version: "1.26.10"
           cache: true
 
       - name: Validate GitHub Actions workflows
@@ -80,8 +80,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit dependencies
-        run: npm audit --audit-level=high
+      - name: Audit dependency gate tests
+        working-directory: .
+        run: node --test scripts/audit-web-dependencies.test.mjs
+
+      - name: Audit dependencies with explicit build-only triage
+        working-directory: .
+        run: node scripts/audit-web-dependencies.mjs
 
       - name: Lint
         run: npm run lint:check
